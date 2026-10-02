@@ -2,6 +2,10 @@
 .gitignore
 .idea
 .venv
+data
+web_dist
+.env
+.env.*
 __pycache__
 *.pyc
 *.pyo

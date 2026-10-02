@@ -237,8 +237,7 @@ class OAuthLoginService:
             # 打到 docker logs 方便排错——OAuth 换 token 的失败原因往往只有这里能看到
             print(
                 f"[oauth-login] /api/accounts/oauth/token rejected: "
-                f"status={response.status_code} detail={detail!r} "
-                f"raw_body={(getattr(response, 'text', '') or '')[:500]!r}",
+                f"status={response.status_code}",
                 flush=True,
             )
             raise OAuthLoginError(

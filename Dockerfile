@@ -41,6 +41,8 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+RUN uv run --no-sync python -m playwright install --with-deps chromium
 
 COPY main.py ./
 COPY config.json ./

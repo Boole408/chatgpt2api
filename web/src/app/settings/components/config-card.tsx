@@ -25,6 +25,7 @@ export function ConfigCard() {
   const setRefreshAccountIntervalMinute = useSettingsStore((state) => state.setRefreshAccountIntervalMinute);
   const setImageRetentionDays = useSettingsStore((state) => state.setImageRetentionDays);
   const setImagePollTimeoutSecs = useSettingsStore((state) => state.setImagePollTimeoutSecs);
+  const setImageTaskTimeoutSecs = useSettingsStore((state) => state.setImageTaskTimeoutSecs);
   const setImageAccountConcurrency = useSettingsStore((state) => state.setImageAccountConcurrency);
   const setImageSettleEnabled = useSettingsStore((state) => state.setImageSettleEnabled);
   const setImageRemoveConversationAfterResult = useSettingsStore((state) => state.setImageRemoveConversationAfterResult);
@@ -157,7 +158,7 @@ export function ConfigCard() {
               placeholder="gpt-5-5"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
-            <p className="text-xs text-stone-500">gpt-image-2 发起图片请求时使用的上游模型名称，默认 gpt-5-5。</p>
+            <p className="text-xs text-stone-500">仅用于 gpt-image-2 的上游模型名称，默认 gpt-5-5；gpt-image-2.5 始终以同名发送上游。</p>
           </div>
           <div className="space-y-2">
             <label className="text-sm text-stone-700">默认思考强度</label>
@@ -205,7 +206,17 @@ export function ConfigCard() {
               placeholder="1"
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
-            <p className="text-xs text-stone-500">限制每个账号同时处理的图片请求数量，默认 3。</p>
+            <p className="text-xs text-stone-500">限制每个账号同时处理的图片请求数量；建议先以 1 对照超时率，再逐步调高。</p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">单图总等待预算</label>
+            <Input
+              value={String(config?.image_task_timeout_secs || "")}
+              onChange={(event) => setImageTaskTimeoutSecs(event.target.value)}
+              placeholder="360"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">单位秒，官网生图的账号等待、生成与轮询共用；超时后可继续等待已有会话。</p>
           </div>
           <div className="space-y-2">
             <label className="flex items-center gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700">

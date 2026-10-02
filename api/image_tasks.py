@@ -117,4 +117,12 @@ def create_router() -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
 
+    @router.post("/api/image-tasks/{task_id}/retry-upscale")
+    async def retry_image_upscale(task_id: str, authorization: str | None = Header(default=None)):
+        identity = require_identity(authorization)
+        try:
+            return await run_in_threadpool(image_task_service.retry_upscale, identity, task_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+
     return router

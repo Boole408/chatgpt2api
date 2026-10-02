@@ -32,6 +32,7 @@ from utils.helper import (
     extract_image_from_message_content,
     extract_response_prompt,
     has_response_image_generation_tool,
+    image_upscale_target,
     route_image_model_for_size,
 )
 from utils.image_tokens import (
@@ -441,10 +442,12 @@ def response_events(body: dict[str, Any]) -> Iterator[dict[str, Any]]:
     input_image_tokens = count_image_content_tokens(_input_image_parts(body.get("input")), model)
     tool = response_image_tool(body)
     routed_model, routed_size = route_image_model_for_size(model, tool.get("size"))
+    upscale_target = image_upscale_target(model, tool.get("size"))
     image_outputs = stream_image_outputs_with_pool(ConversationRequest(
         prompt=prompt,
         model=routed_model,
         size=routed_size,
+        upscale_target=upscale_target,
         quality=str(tool.get("quality") or "auto"),
         response_format="b64_json",
         images=images,

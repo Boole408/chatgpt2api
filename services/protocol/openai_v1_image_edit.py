@@ -14,7 +14,7 @@ from services.protocol.conversation import (
     stream_image_chunks,
     stream_image_outputs_with_pool,
 )
-from utils.helper import route_image_model_for_size
+from utils.helper import image_upscale_target, route_image_model_for_size
 from utils.image_tokens import count_image_inputs_tokens, count_image_output_items_tokens, image_usage
 
 
@@ -57,6 +57,7 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     requested_model = str(body.get("model") or "gpt-image-2")
     n = int(body.get("n") or 1)
     model, size = route_image_model_for_size(requested_model, body.get("size"))
+    upscale_target = image_upscale_target(requested_model, body.get("size"))
     quality = str(body.get("quality") or "auto")
     response_format = str(body.get("response_format") or "b64_json")
     base_url = str(body.get("base_url") or "") or None
@@ -69,12 +70,14 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
         model=model,
         n=n,
         size=size,
+        upscale_target=upscale_target,
         quality=quality,
         response_format=response_format,
         base_url=base_url,
         images=encoded_images,
         message_as_error=True,
         progress_callback=progress_callback,
+        upscale_source_callback=body.get("upscale_source_callback"),
     ))
     if body.get("stream"):
         return stream_image_chunks(outputs)

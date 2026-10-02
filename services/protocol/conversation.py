@@ -6,7 +6,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from io import BytesIO
 from typing import Any, Iterable, Iterator
 
@@ -16,7 +16,8 @@ from PIL import Image, ImageFilter, ImageOps
 from services.account_service import account_service
 from services.config import config
 from services.image_storage_service import image_storage_service
-from services.openai_backend_api import ImageContentPolicyError, ImagePollTimeoutError, OpenAIBackendAPI
+from services.image_upscale_service import ImageUpscaleError, upscale_image_bytes
+from services.openai_backend_api import ImageContentPolicyError, ImagePollTimeoutError, ImageStreamHardTimeoutError, OpenAIBackendAPI
 from utils.helper import (
     IMAGE_MODELS,
     UpstreamHTTPError,
@@ -59,6 +60,8 @@ class ImageGenerationError(Exception):
         }
         if self.account_email:
             error_dict["error"]["account_email"] = self.account_email
+        if getattr(self, "original_url", ""):
+            error_dict["error"]["original_url"] = self.original_url
         return error_dict
 
 
@@ -302,6 +305,35 @@ def format_image_result(
     return result
 
 
+def format_request_image_result(
+    items: list[dict[str, Any]], request: ConversationRequest, created: int | None = None,
+) -> dict[str, Any]:
+    """Process the original pixels before the public image is saved or emitted."""
+    if not request.upscale_target:
+        return format_image_result(items, request.prompt, request.response_format, request.base_url, created)
+    processed: list[dict[str, Any]] = []
+    for item in items:
+        payload = str(item.get("b64_json") or "")
+        if not payload:
+            continue
+        try:
+            result, _source = upscale_image_bytes(
+                base64.b64decode(payload), request.upscale_target, request.base_url,
+                request.progress_callback,
+                request.upscale_source_callback,
+            )
+        except ImageUpscaleError as exc:
+            error = ImageGenerationError(
+                str(exc), status_code=exc.status_code, code=exc.code,
+            )
+            if exc.source:
+                error.original_path = exc.source.path
+                error.original_url = exc.source.url
+            raise error from exc
+        processed.append({**item, "b64_json": base64.b64encode(result).decode("ascii"), "output_format": "png"})
+    return format_image_result(processed, request.prompt, request.response_format, request.base_url, created)
+
+
 @dataclass
 class ConversationRequest:
     model: str = "auto"
@@ -311,11 +343,23 @@ class ConversationRequest:
     images: list[str] | None = None
     n: int = 1
     size: str | None = None
+    upscale_target: str | None = None
     quality: str = "auto"
     response_format: str = "b64_json"
     base_url: str | None = None
     message_as_error: bool = False
     progress_callback: Any = None  # Callable[[str], None] | None
+    upscale_source_callback: Any = None  # Callable[[UpscaleSource], None] | None
+    deadline: float | None = None  # monotonic deadline, shared across retries for one image
+
+
+def _image_poll_budget(request: ConversationRequest, requested_secs: float, conversation_id: str) -> float:
+    if request.deadline is None:
+        return requested_secs
+    remaining = request.deadline - time.monotonic()
+    if remaining <= 0:
+        raise ImagePollTimeoutError("ChatGPT 生图超时（已达到任务总时限）。", conversation_id)
+    return min(requested_secs, remaining)
 
 
 @dataclass
@@ -980,7 +1024,8 @@ def stream_image_outputs(
 
     try:
         image_urls = backend.resolve_conversation_image_urls(
-            conversation_id, file_ids, sediment_ids, poll_timeout_secs=poll_timeout,
+            conversation_id, file_ids, sediment_ids,
+            poll_timeout_secs=_image_poll_budget(request, poll_timeout, conversation_id),
         )
     except (ImageContentPolicyError, ImagePollTimeoutError) as exc:
         # 当检测到文本回复时，task error 不应直接判定为内容策略违规，
@@ -1014,13 +1059,7 @@ def stream_image_outputs(
             {"b64_json": base64.b64encode(image_data).decode("ascii")}
             for image_data in backend.download_image_bytes(image_urls)
         ]
-        data = format_image_result(
-            image_items,
-            request.prompt,
-            request.response_format,
-            request.base_url,
-            int(time.time()),
-        )["data"]
+        data = format_request_image_result(image_items, request, int(time.time()))["data"]
         if data:
             yield ImageOutput(kind="result", model=request.model, index=index, total=total, data=data, conversation_id=conversation_id)
         return
@@ -1062,7 +1101,7 @@ def stream_image_outputs(
                 try:
                     polled_file_ids, polled_sediment_ids = backend._poll_image_results(
                         conversation_id,
-                        retry_poll_timeout,
+                        _image_poll_budget(request, retry_poll_timeout, conversation_id),
                         file_ids,
                         sediment_ids,
                     )
@@ -1088,7 +1127,7 @@ def stream_image_outputs(
                     # 如果还有重试次数且不是超时/内容违规错误，继续重试
                     if poll_attempt < MAX_POLL_RETRIES and not isinstance(exc, (ImagePollTimeoutError, ImageContentPolicyError)):
                         # 递增退避：30s, 60s, 90s
-                        backoff = 30.0 * poll_attempt
+                        backoff = min(30.0 * poll_attempt, _image_poll_budget(request, 30.0 * poll_attempt, conversation_id))
                         logger.info({
                             "event": "image_model_text_reply_poll_retry",
                             "conversation_id": conversation_id,
@@ -1111,13 +1150,7 @@ def stream_image_outputs(
                         {"b64_json": base64.b64encode(image_data).decode("ascii")}
                         for image_data in backend.download_image_bytes(image_urls)
                     ]
-                    data = format_image_result(
-                        image_items,
-                        request.prompt,
-                        request.response_format,
-                        request.base_url,
-                        int(time.time()),
-                    )["data"]
+                    data = format_request_image_result(image_items, request, int(time.time()))["data"]
                     if data:
                         yield ImageOutput(kind="result", model=request.model, index=index, total=total, data=data, conversation_id=conversation_id)
                         return
@@ -1127,6 +1160,8 @@ def stream_image_outputs(
                 "conversation_id": conversation_id,
                 "message_preview": message[:200],
             })
+        if is_text_reply and conversation_id:
+            raise ImagePollTimeoutError("ChatGPT 生图超时（图片仍可能在后台生成，可继续等待）。", conversation_id)
         yield ImageOutput(kind="message", model=request.model, index=index, total=total, text=message, conversation_id=conversation_id)
         return
 
@@ -1163,7 +1198,8 @@ def stream_image_outputs(
         retry_poll_timeout = max(config.image_poll_timeout_secs, 300)
         MAX_FALLBACK_POLL_RETRIES = 3
         for poll_attempt in range(1, MAX_FALLBACK_POLL_RETRIES + 1):
-            retry_wait_secs = min(30.0 * poll_attempt, config.image_poll_initial_wait_secs * poll_attempt)
+            retry_wait_secs = min(30.0 * poll_attempt, config.image_poll_initial_wait_secs * poll_attempt,
+                                  _image_poll_budget(request, 30.0 * poll_attempt, conversation_id))
             logger.info({
                 "event": "image_stream_retry_poll_after_wait",
                 "conversation_id": conversation_id,
@@ -1174,7 +1210,7 @@ def stream_image_outputs(
             try:
                 polled_file_ids, polled_sediment_ids = backend._poll_image_results(
                     conversation_id,
-                    retry_poll_timeout,
+                    _image_poll_budget(request, retry_poll_timeout, conversation_id),
                     file_ids,
                     sediment_ids,
                 )
@@ -1200,7 +1236,7 @@ def stream_image_outputs(
                 # 如果还有重试次数且不是超时/内容违规错误，继续重试
                 if poll_attempt < MAX_FALLBACK_POLL_RETRIES and not isinstance(exc, (ImagePollTimeoutError, ImageContentPolicyError)):
                     # 递增退避：30s, 60s
-                    backoff = 30.0 * poll_attempt
+                    backoff = min(30.0 * poll_attempt, _image_poll_budget(request, 30.0 * poll_attempt, conversation_id))
                     logger.info({
                         "event": "image_stream_retry_poll_retry",
                         "conversation_id": conversation_id,
@@ -1223,22 +1259,13 @@ def stream_image_outputs(
                     {"b64_json": base64.b64encode(image_data).decode("ascii")}
                     for image_data in backend.download_image_bytes(image_urls)
                 ]
-                data = format_image_result(
-                    image_items,
-                    request.prompt,
-                    request.response_format,
-                    request.base_url,
-                    int(time.time()),
-                )["data"]
+                data = format_request_image_result(image_items, request, int(time.time()))["data"]
                 if data:
                     yield ImageOutput(kind="result", model=request.model, index=index, total=total, data=data, conversation_id=conversation_id)
                     return
         
-        # 重试后仍然失败，yield 错误消息
-        yield ImageOutput(kind="message", model=request.model, index=index, total=total,
-                          text="Image generation completed upstream but the result could not be retrieved. "
-                               "The image may still be processing. Please try again in a moment.",
-                          conversation_id=conversation_id)
+        # 上游会话仍可继续轮询，不重新生图。
+        raise ImagePollTimeoutError("ChatGPT 生图超时（图片仍可能在后台生成，可继续等待）。", conversation_id)
     elif message:
         yield ImageOutput(kind="message", model=request.model, index=index, total=total, text=message, conversation_id=conversation_id)
     else:
@@ -1410,15 +1437,19 @@ def _generate_single_image(
     # 上游账号额度耗尽时，跳过当前账号并轮换池中其他账号
     MAX_RATE_LIMIT_RETRIES = 20
 
+    request = replace(request, deadline=time.monotonic() + config.image_task_timeout_secs)
     text_reply_retry_count = 0
     tls_retry_count = 0
     conn_timeout_retry_count = 0
     poll_timeout_retry_count = 0
     rate_limit_retry_count = 0
     rate_limited_tokens: set[str] = set()
+    poll_timed_out_tokens: set[str] = set()
     account_email = ""
 
     while True:
+        if request.deadline is not None and time.monotonic() >= request.deadline:
+            raise ImagePollTimeoutError("ChatGPT 生图超时（已达到任务总时限）。")
         try:
             if request.progress_callback:
                 request.progress_callback("getting_account")
@@ -1428,8 +1459,11 @@ def _generate_single_image(
                 plan_type=plan_type,
                 source_type="codex" if codex_model else None,
                 plan_types=("plus", "team", "pro") if codex_model and not plan_type else None,
-                excluded_tokens=rate_limited_tokens,
+                excluded_tokens=rate_limited_tokens | poll_timed_out_tokens,
+                deadline=request.deadline,
             )
+        except TimeoutError as exc:
+            raise ImagePollTimeoutError("ChatGPT 生图超时（等待图片账号空闲超时）。") from exc
         except RuntimeError as exc:
             raise ImageGenerationError(str(exc) or "image generation failed", account_email=account_email) from exc
 
@@ -1448,11 +1482,13 @@ def _generate_single_image(
         backend = None
         try:
             backend = OpenAIBackendAPI(access_token=token)
+            backend._image_deadline = request.deadline
             if request.progress_callback:
                 backend.progress_callback = request.progress_callback
             stream_fn = stream_codex_image_outputs if is_codex_image_model(request.model) else stream_image_outputs
             outputs: list[ImageOutput] = []
             last_conversation_id = ""
+            recoverable_timeout = False
             try:
                 for output in stream_fn(backend, request, index, total):
                     last_conversation_id = output.conversation_id or last_conversation_id
@@ -1474,9 +1510,13 @@ def _generate_single_image(
             except Exception as exc:
                 # 异常路径（内容政策拒绝、轮询超时等）会话 ID 只挂在异常上
                 last_conversation_id = last_conversation_id or str(getattr(exc, "conversation_id", "") or "")
-                raise
+                if isinstance(exc, ImageStreamHardTimeoutError) and last_conversation_id:
+                    exc = ImagePollTimeoutError("ChatGPT 生图超时（生成流已达到等待上限）。", last_conversation_id)
+                recoverable_timeout = isinstance(exc, ImagePollTimeoutError) and bool(last_conversation_id)
+                raise exc
             finally:
-                _remove_image_conversation_later(backend, last_conversation_id, success=returned_result)
+                if not recoverable_timeout:
+                    _remove_image_conversation_later(backend, last_conversation_id, success=returned_result)
             if returned_message:
                 account_service.mark_image_result(token, False)
                 return outputs
@@ -1499,27 +1539,33 @@ def _generate_single_image(
             account_service.mark_image_result(token, False)
             if account_email:
                 setattr(exc, "account_email", account_email)
-            # 轮询超时：换账号重试
-            if not emitted_for_token:
-                poll_timeout_retry_count += 1
-                if poll_timeout_retry_count <= MAX_POLL_TIMEOUT_RETRIES:
-                    logger.warning({
-                        "event": "image_poll_timeout_retry",
-                        "request_token": token,
-                        "account_email": account_email,
-                        "retry_count": poll_timeout_retry_count,
-                        "index": index,
-                        "error": str(exc)[:200],
-                    })
-                    continue
+            if exc.conversation_id:
+                setattr(exc, "access_token", token)
+                logger.info({"event": "image_poll_timeout_resume_available", "conversation_id": exc.conversation_id,
+                             "account_email": account_email, "index": index})
+                raise
+            # Progress events are buffered inside this function and do not mean a
+            # downstream image result has been emitted. Always rotate to a different
+            # account when polling expires before a terminal result is available.
+            poll_timed_out_tokens.add(token)
+            poll_timeout_retry_count += 1
+            if poll_timeout_retry_count <= MAX_POLL_TIMEOUT_RETRIES:
                 logger.warning({
-                    "event": "image_poll_timeout_exhausted_retries",
+                    "event": "image_poll_timeout_retry",
                     "request_token": token,
                     "account_email": account_email,
                     "retry_count": poll_timeout_retry_count,
                     "index": index,
+                    "error": str(exc)[:200],
                 })
-                raise
+                continue
+            logger.warning({
+                "event": "image_poll_timeout_exhausted_retries",
+                "request_token": token,
+                "account_email": account_email,
+                "retry_count": poll_timeout_retry_count,
+                "index": index,
+            })
             raise
         except ImageContentPolicyError as exc:
             account_service.mark_image_result(token, False)
@@ -1539,7 +1585,7 @@ def _generate_single_image(
                 conversation_id=getattr(exc, "conversation_id", ""),
             ) from exc
         except ImageGenerationError as exc:
-            account_service.mark_image_result(token, False)
+            account_service.mark_image_result(token, exc.code in {"upscale_failed", "upscale_timeout"})
             if account_email and not getattr(exc, "account_email", ""):
                 exc.account_email = account_email
             error_text = str(exc)
@@ -1650,6 +1696,21 @@ def stream_image_outputs_with_pool(request: ConversationRequest) -> Iterator[Ima
     if not is_supported_image_model(request.model):
         raise ImageGenerationError("unsupported image model,supported models: " + ", ".join(sorted(IMAGE_MODELS)))
 
+    plan_type, _ = split_image_model(request.model)
+    if is_codex_image_model(request.model) and not account_service.has_ready_image_account(
+            plan_type=plan_type,
+            source_type="codex",
+            plan_types=("plus", "team", "pro") if not plan_type else None,
+    ):
+        raise ImageGenerationError(
+            "Codex image generation is unavailable: add an active Plus, Team, or Pro "
+            "Codex account with remaining image quota before requesting 2K/4K output.",
+            status_code=400,
+            error_type="invalid_request_error",
+            code="codex_image_account_unavailable",
+            param="size",
+        )
+
     if request.n <= 1:
         # 单张图片，直接执行（无需线程池开销）
         outputs = _generate_single_image(request, 1, 1)
@@ -1696,6 +1757,11 @@ def stream_image_outputs_with_pool(request: ConversationRequest) -> Iterator[Ima
                     "index": index,
                     "error": str(exc)[:300],
                 })
+
+    if request.upscale_target:
+        for error in errors.values():
+            if isinstance(error, ImageGenerationError) and error.code in {"upscale_failed", "upscale_timeout"}:
+                raise error
 
     # yield 结果：跳过索引顺序限制，不再让低索引失败阻塞高索引成功结果
     emitted = False

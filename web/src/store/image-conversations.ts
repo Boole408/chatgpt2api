@@ -22,6 +22,9 @@ export type StoredImage = {
   url?: string;
   revised_prompt?: string;
   error?: string;
+  resumable?: boolean;
+  upscaleResumable?: boolean;
+  originalUrl?: string;
   startTime?: number;
   elapsedSecs?: number;
   elapsedUpdatedAt?: number;
@@ -81,6 +84,9 @@ function normalizeStoredImage(image: StoredImage): StoredImage {
     elapsedSecs: typeof image.elapsedSecs === "number" ? image.elapsedSecs : undefined,
     elapsedUpdatedAt: typeof image.elapsedUpdatedAt === "number" ? image.elapsedUpdatedAt : undefined,
     durationMs: typeof image.durationMs === "number" ? image.durationMs : undefined,
+    resumable: image.resumable === true,
+    upscaleResumable: image.upscaleResumable === true,
+    originalUrl: typeof image.originalUrl === "string" ? image.originalUrl : undefined,
   };
   if (image.status === "loading" || image.status === "error" || image.status === "success") {
     return normalized;

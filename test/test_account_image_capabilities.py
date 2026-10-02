@@ -114,6 +114,29 @@ class AccountCapabilityTests(unittest.TestCase):
 
             self.assertEqual(token, "token-ready")
 
+    def test_has_ready_image_account_filters_codex_plan_and_quota(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            service = AccountService(JSONStorageBackend(Path(tmp_dir) / "accounts.json"))
+            service.add_account_items([
+                {"access_token": "free-codex", "type": "free", "source_type": "codex", "status": "正常", "quota": 5},
+                {"access_token": "plus-web", "type": "Plus", "source_type": "web", "status": "正常", "quota": 5},
+                {"access_token": "plus-empty", "type": "Plus", "source_type": "codex", "status": "限流", "quota": 0},
+            ])
+
+            self.assertFalse(service.has_ready_image_account(
+                source_type="codex",
+                plan_types=("plus", "team", "pro"),
+            ))
+
+            service.add_account_items([
+                {"access_token": "team-codex", "type": "Team", "source_type": "codex", "status": "正常", "quota": 2},
+            ])
+
+            self.assertTrue(service.has_ready_image_account(
+                source_type="codex",
+                plan_types=("plus", "team", "pro"),
+            ))
+
     def test_refresh_accounts_can_remove_invalid_token_without_confirmation_delay(self) -> None:
         original_value = config.data.get("auto_remove_invalid_accounts")
         config.data["auto_remove_invalid_accounts"] = True

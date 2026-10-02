@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from services.proxy_service import proxy_settings
 from utils.log import logger
 
-BASE_IMAGE_MODELS = {"gpt-image-2", "codex-gpt-image-2"}
+BASE_IMAGE_MODELS = {"gpt-image-2", "gpt-image-2.5", "codex-gpt-image-2"}
 IMAGE_MODEL_PLAN_TYPES = ("plus", "team", "pro")
 CODEX_IMAGE_MODEL = "codex-gpt-image-2"
 PREFIXED_CODEX_IMAGE_MODELS = {
@@ -138,25 +138,64 @@ _IMAGE_SIZE_ALIASES = {
     "4k": "3840x2160",
 }
 
+# High-resolution requests for the regular model never route to Codex.
+# Prefer exact presets, then match other safe targets to a 1K-tier canvas.
+UPSCALE_SOURCE_SIZES = {
+    "2048x2048": "1024x1024",
+    "2560x1440": "1920x1088",
+    "1440x2560": "1088x1920",
+    "3840x2160": "1920x1088",
+    "2160x3840": "1088x1920",
+}
+_UPSCALE_SOURCE_CANDIDATES = (
+    (1024, 1024), (1536, 1024), (1024, 1536),
+    (1365, 1024), (1024, 1365), (1920, 1088), (1088, 1920),
+)
+
+
+def _normalized_image_size(size: object) -> str:
+    raw_size = str(size or "").strip().lower().replace(" ", "").replace("×", "x")
+    return _IMAGE_SIZE_ALIASES.get(raw_size, raw_size)
+
+
+def _upscale_source_size(target: str) -> str | None:
+    if target in UPSCALE_SOURCE_SIZES:
+        return UPSCALE_SOURCE_SIZES[target]
+    match = _IMAGE_SIZE_RE.fullmatch(target)
+    if not match:
+        return None
+    width, height = int(match.group("width")), int(match.group("height"))
+    if min(width, height) < 1024 or max(width, height) > 3840 or width * height > 16_000_000:
+        return None
+    if max(width, height) < 2048:
+        return None
+    target_ratio = width / height
+    for source_width, source_height in _UPSCALE_SOURCE_CANDIDATES:
+        source_ratio = source_width / source_height
+        ratio_loss = 1 - min(source_ratio, target_ratio) / max(source_ratio, target_ratio)
+        if ratio_loss <= 0.02 and source_width * 2 >= width and source_height * 2 >= height:
+            return f"{source_width}x{source_height}"
+    return None
+
+
+def image_upscale_target(model: object, size: object) -> str | None:
+    # CPU super-resolution is disabled for all new requests. Keep this helper
+    # for callers that still carry the historical upscale_target field.
+    return None
+
 
 def route_image_model_for_size(model: object, size: object) -> tuple[str, str | None]:
-    """Route high-resolution gpt-image-2 requests through the Codex image backend.
-
-    Downstream clients commonly send either an exact ``WIDTHxHEIGHT`` value or
-    a short ``2k``/``4k`` alias.  The regular image backend is kept for 1K
-    requests; any dimension of 2048 pixels or more uses the structured Codex
-    image endpoint, which can honor 2K/4K sizes.
-    """
+    """Reject unsupported high resolution; never silently upscale or switch models."""
     requested_model = str(model or "gpt-image-2").strip() or "gpt-image-2"
-    raw_size = str(size or "").strip().lower().replace(" ", "")
-    normalized_size = _IMAGE_SIZE_ALIASES.get(raw_size, raw_size) or None
+    normalized_size = _normalized_image_size(size) or None
     match = _IMAGE_SIZE_RE.fullmatch(normalized_size or "")
-    high_resolution = bool(
-        raw_size in {"2k", "4k"}
-        or (match and max(int(match.group("width")), int(match.group("height"))) >= 2048)
-    )
-    if requested_model.lower() == "gpt-image-2" and high_resolution:
-        return CODEX_IMAGE_MODEL, normalized_size
+    if requested_model.lower() in {"gpt-image-2", "gpt-image-2.5"} and match and max(
+        int(match.group("width")), int(match.group("height"))
+    ) >= 2048:
+        logger.warning({"event": "image_size_unsupported", "model": requested_model,
+                        "requested_size": normalized_size})
+        raise HTTPException(status_code=400, detail={"error":
+            "图片超分已关闭；普通生图模型暂不支持 2K/4K 请求，请使用原图尺寸或显式指定 Codex 模型"})
     return requested_model, normalized_size
 
 

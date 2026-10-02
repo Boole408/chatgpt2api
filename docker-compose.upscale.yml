@@ -1,0 +1,23 @@
+# Add with: docker compose -f docker-compose.yml -f docker-compose.upscale.yml up -d --build
+services:
+  app:
+    environment:
+      IMAGE_UPSCALE_WORKER_URL: http://upscale:8091
+    depends_on:
+      upscale:
+        condition: service_healthy
+
+  upscale:
+    build:
+      context: ./upscale_worker
+    image: chatgpt2api-upscale:realesrgan-x2plus-v0.2.1
+    restart: unless-stopped
+    cpus: "3.0"
+    mem_limit: 5g
+    environment:
+      OMP_NUM_THREADS: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

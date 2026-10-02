@@ -37,7 +37,7 @@ class FakeBackend(OpenAIBackendAPI):
         self.file_urls: dict[str, str] = {}
         self.sediment_urls: dict[str, str] = {}
 
-    def _get_conversation(self, conversation_id: str) -> dict:
+    def _get_conversation(self, conversation_id: str, timeout_secs: float = 60.0) -> dict:
         self.calls += 1
         index = min(self.calls - 1, len(self.conversations) - 1)
         return self.conversations[index]
@@ -119,7 +119,8 @@ class MultiImageResultTests(unittest.TestCase):
         ])
 
         with (
-            mock.patch.dict(config.data, {"image_poll_initial_wait_secs": 0, "image_poll_interval_secs": 0.5}),
+            mock.patch.dict(config.data, {"image_poll_initial_wait_secs": 0, "image_poll_interval_secs": 0.5,
+                                          "image_check_before_hit_enabled": True, "image_settle_enabled": True}),
             mock.patch("services.openai_backend_api.time.sleep", lambda _seconds: None),
         ):
             file_ids, sediment_ids = backend._poll_image_results("conv-1", timeout_secs=10)
@@ -153,6 +154,16 @@ class MultiImageResultTests(unittest.TestCase):
             urls = backend.resolve_conversation_image_urls("conv-1", ["file-one"], [], poll=True)
 
         self.assertEqual(urls, ["https://files.test/one.png"])
+
+    def test_direct_resolve_without_url_falls_back_to_poll(self) -> None:
+        backend = FakeBackend([_conversation(["file-one"])])
+        with mock.patch.dict(config.data, {"image_check_before_hit_enabled": False, "image_settle_enabled": False}), \
+             mock.patch.object(backend, "_resolve_image_urls", side_effect=[[], ["https://files.test/one.png"]]) as resolver, \
+             mock.patch.object(backend, "_poll_image_results", return_value=(["file-one"], [])) as poll:
+            urls = backend.resolve_conversation_image_urls("conv-1", ["file-one"], [], poll_timeout_secs=15)
+        self.assertEqual(urls, ["https://files.test/one.png"])
+        self.assertEqual(resolver.call_count, 2)
+        poll.assert_called_once_with("conv-1", 15, ["file-one"], [])
 
     def test_responses_stream_emits_all_image_output_items(self) -> None:
         first = base64.b64encode(b"first").decode("ascii")

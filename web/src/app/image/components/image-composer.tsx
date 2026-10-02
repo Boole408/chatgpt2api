@@ -127,6 +127,7 @@ export function ImageComposer({
   const ratioLabel = imageRatio === "auto" ? "auto" : `${imageRatio}(${imageTier})`;
   const imageSizeLabel = `${qualityLabel} · ${ratioLabel} · ${imageCount || 1} 张`;
   const selectedModelLabel = modelOptions.find((option) => option.value === imageModel)?.label || imageModel;
+  const supportsHighResolution = imageModel.endsWith("codex-gpt-image-2");
   useEffect(() => {
     if (!isSizeMenuOpen) {
       return;
@@ -359,6 +360,13 @@ export function ImageComposer({
                             value={imageModel}
                             onValueChange={(value) => {
                               onImageModelChange(value as ImageModel);
+                              if (!value.endsWith("codex-gpt-image-2") &&
+                                  (Number(imageWidth) >= 2048 || Number(imageHeight) >= 2048)) {
+                                onImageRatioChange("1:1");
+                                onImageTierChange("1k");
+                                onImageWidthChange("1024");
+                                onImageHeightChange("1024");
+                              }
                             }}
                           >
                             <SelectTrigger className="h-10 rounded-xl border-stone-200 bg-white text-sm shadow-none">
@@ -441,13 +449,16 @@ export function ImageComposer({
                               />
                             </div>
                           </div>
+                          {!supportsHighResolution && (
+                            <p className="mt-1 text-xs text-stone-500">CPU 超分已关闭，2K/4K 仅显式 Codex 模型可用。</p>
+                          )}
                         </div>
                         <div className="mb-3">
                           <div className="mb-2 flex items-center gap-1.5 text-sm font-medium text-stone-900">
                             宽高比 <Info className="size-3.5 text-stone-400" />
                           </div>
                           <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
-                            {aspectOptions.map((option) => {
+                            {aspectOptions.filter((option) => supportsHighResolution || option.tier === "1k" || option.tier === "auto").map((option) => {
                               const active = option.ratio === imageRatio && option.tier === imageTier && option.width === imageWidth && option.height === imageHeight;
                               const Icon = option.icon;
                               return (

@@ -103,7 +103,7 @@ const docs: ApiDoc[] = [
       ["prompt", "string", "图片生成提示词。"],
       ["model", "string", "可选，默认 gpt-image-2。"],
       ["n", "number", "可选，生成数量，当前限制 1-4。"],
-      ["size", "string", "可选；gpt-image-2 的 2K/4K 请求会自动切换 Codex 生图链路。"],
+      ["size", "string", "可选；普通生图模型不再进行超分，2K/4K 仅显式 Codex 模型可用。"],
       ["quality", "string", "可选，默认 auto。"],
       ["response_format", "string", "可选，默认 b64_json。"],
     ],
@@ -127,7 +127,7 @@ const docs: ApiDoc[] = [
       ["prompt", "string", "编辑提示词。"],
       ["model", "string", "可选，默认 gpt-image-2。"],
       ["n", "number", "可选，生成数量，当前限制 1-4。"],
-      ["size", "string", "可选；gpt-image-2 的 2K/4K 请求会自动切换 Codex 生图链路。"],
+      ["size", "string", "可选；普通生图模型不再进行超分，2K/4K 仅显式 Codex 模型可用。"],
       ["quality", "string", "可选，默认 auto。"],
     ],
     output: [
@@ -215,7 +215,7 @@ const docs: ApiDoc[] = [
   },
 ];
 
-const usableModels = ["gpt-image-2", "codex-gpt-image-2", "auto", "gpt-5", "gpt-5-1", "gpt-5-2", "gpt-5-3", "gpt-5-3-mini", "gpt-5-mini"];
+const usableModels = ["gpt-image-2", "gpt-image-2.5", "codex-gpt-image-2", "auto", "gpt-5", "gpt-5-1", "gpt-5-2", "gpt-5-3", "gpt-5-3-mini", "gpt-5-mini"];
 
 function ParamTable({ rows }: { rows: ParamRow[] }) {
   return (

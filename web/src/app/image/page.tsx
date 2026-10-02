@@ -24,6 +24,7 @@ import {
   fetchModels,
   fetchImageTasks,
   resumeImagePoll,
+  retryImageUpscale,
   type Account,
   type ImageModel,
   type Model,
@@ -225,6 +226,8 @@ function taskDataToStoredImage(image: StoredImage, task: ImageTask): StoredImage
       url: first.url,
       revised_prompt: first.revised_prompt,
       error: undefined,
+      resumable: false,
+      upscaleResumable: false,
       durationMs: task.duration_ms,
     };
   }
@@ -237,6 +240,9 @@ function taskDataToStoredImage(image: StoredImage, task: ImageTask): StoredImage
       taskStatus: undefined,
       progress: undefined,
       error: task.error || "生成失败",
+      resumable: task.resumable === true,
+      upscaleResumable: task.upscale_resumable === true,
+      originalUrl: task.original_url,
       durationMs: task.duration_ms,
     };
   }
@@ -1270,6 +1276,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   task.status === "error" &&
                   task.error?.includes("超时") &&
                   task.conversation_id &&
+                  task.resumable &&
                   !retryingTaskIdsRef.has(task.id),
               );
               if (timeoutTask && timeoutTask.conversation_id) {
@@ -1435,6 +1442,30 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     },
     [runConversationQueue],
   );
+
+  const handleRetryUpscale = useCallback(async (taskId: string) => {
+    try {
+      await retryImageUpscale(taskId);
+      const conversation = conversationsRef.current.find((item) =>
+        item.turns.some((turn) => turn.images.some((image) => image.taskId === taskId))
+      );
+      if (!conversation) return;
+      await updateConversation(conversation.id, (current) => ({
+        ...(current ?? conversation),
+        turns: (current ?? conversation).turns.map((turn) => {
+          if (!turn.images.some((image) => image.taskId === taskId)) return turn;
+          const images = turn.images.map((image) => image.taskId === taskId
+            ? { ...image, status: "loading" as const, error: undefined, progress: "upscaling", upscaleResumable: false }
+            : image);
+          return { ...turn, ...deriveTurnStatus({ ...turn, images }), images };
+        }),
+      }));
+      void runConversationQueue(conversation.id);
+      toast.info("已从原图继续超分");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "重试超分失败");
+    }
+  }, [runConversationQueue, updateConversation]);
 
   const handleTimeoutRetryContinue = useCallback(async () => {
     if (!timeoutRetry) return;
@@ -1701,6 +1732,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                 onRegenerateTurn={handleRegenerateTurn}
                 onRetryImage={handleRetryImage}
                 onTimeoutRetryContinue={handleTimeoutRetryContinue}
+                onRetryUpscale={handleRetryUpscale}
                 onDismissErrors={handleDismissErrors}
                 formatConversationTime={formatConversationTime}
               />

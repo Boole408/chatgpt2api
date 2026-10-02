@@ -920,12 +920,33 @@ class AccountService:
             if int(self._image_inflight.get(token, 0)) < max_concurrency
         ]
 
+    def has_ready_image_account(
+            self,
+            plan_type: str | None = None,
+            source_type: str | None = None,
+            plan_types: set[str] | tuple[str, ...] | None = None,
+    ) -> bool:
+        """Return whether the cached pool has a usable matching image account.
+
+        This intentionally avoids a remote refresh so capability checks can reject
+        unsupported requests immediately without consuming an account slot.
+        The normal account acquisition path still performs authoritative remote
+        validation before a request is sent upstream.
+        """
+        with self._lock:
+            return bool(self._list_ready_candidate_tokens(
+                plan_type=plan_type,
+                source_type=source_type,
+                plan_types=plan_types,
+            ))
+
     def _acquire_next_candidate_token(
             self,
             excluded_tokens: set[str] | None = None,
             plan_type: str | None = None,
             source_type: str | None = None,
             plan_types: set[str] | tuple[str, ...] | None = None,
+            deadline: float | None = None,
     ) -> str:
         with self._image_slot_condition:
             while True:
@@ -940,7 +961,10 @@ class AccountService:
                     self._index += 1
                     self._image_inflight[access_token] = int(self._image_inflight.get(access_token, 0)) + 1
                     return access_token
-                self._image_slot_condition.wait(timeout=1.0)
+                remaining = deadline - time.monotonic() if deadline is not None else 1.0
+                if remaining <= 0:
+                    raise TimeoutError("等待图片账号空闲超时")
+                self._image_slot_condition.wait(timeout=min(1.0, remaining))
 
     def release_image_slot(self, access_token: str) -> None:
         if not access_token:
@@ -960,6 +984,7 @@ class AccountService:
             source_type: str | None = None,
             plan_types: set[str] | tuple[str, ...] | None = None,
             excluded_tokens: set[str] | None = None,
+            deadline: float | None = None,
     ) -> str:
         """从候选池中获取一个可用的图片生图 token。
 
@@ -969,11 +994,14 @@ class AccountService:
         max_attempts = 20  # 防止无限循环
         attempted_tokens: set[str] = set(excluded_tokens or set())
         for _attempt in range(max_attempts):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("等待图片账号空闲超时")
             access_token = self._acquire_next_candidate_token(
                 excluded_tokens=attempted_tokens,
                 plan_type=plan_type,
                 source_type=source_type,
                 plan_types=plan_types,
+                deadline=deadline,
             )
             attempted_tokens.add(access_token)
             try:

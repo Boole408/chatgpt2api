@@ -113,13 +113,25 @@ environment:
 
 ## 功能
 
+### 生图超时与诊断
+
+管理后台的图片任务会记录 `stage_timings_ms`，服务日志中可检索 `image_task_timing`，用于区分账号等待、上游准备、生成流、结果轮询及下载所花的时间。`image_poll_timeout_secs` 控制单次生成流/轮询等待，`image_task_timeout_secs`（默认 360 秒）限制官网生图重试共用的总预算；网络请求仍可能使实际结束时间略晚于预算。若超时任务带有会话 ID 与原账号，工作台的「继续等待」会用原账号续查，不再次发起生图。旧版本已保存的任务没有账号关联，无法续查，需要重新生成。
+
+建议先观察不同阶段的超时率，再调整 `image_account_concurrency`。每账号并发设为 1 可减少同一账号同时生图的压力，但高负载下排队时间可能增加；`image_parallel_generation` 保持启用时，不同账号仍可并行。关闭 `image_settle_enabled` 和 `image_check_before_hit_enabled` 可缩短已拿到图片 ID 的响应时间，但应关注缺图及下载失败率。
+
+### 图片模型与尺寸
+
+CPU 图片超分已关闭。`gpt-image-2` 与 `gpt-image-2.5` 的请求省略 `size` 或使用 1K 档尺寸时直接返回原图；2K/4K 请求明确返回 400，不会自动改走 Codex，也不会把低分辨率原图冒充高分辨率结果。显式选择 `codex-gpt-image-2` 时仍使用原有 Codex 高分辨率链路。
+
+`gpt-image-2` 保持旧行为：上游对话模型由后台的 `default_upstream_model_name` 配置决定。`gpt-image-2.5` 是独立模型名，图片准备与生成请求均以 `gpt-image-2.5` 发送到上游；是否实际可用取决于上游账号的模型权限。历史超分失败任务的原图继续保留，但不再提供超分重试。
+
 ### API 兼容能力
 
 - 兼容 `POST /v1/images/generations` 图片生成接口
 - 兼容 `POST /v1/images/edits` 图片编辑接口
 - 兼容面向图片场景的 `POST /v1/chat/completions`
 - 兼容面向图片场景的 `POST /v1/responses`
-- `GET /v1/models` 返回 `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、
+- `GET /v1/models` 返回 `gpt-image-2`、`gpt-image-2.5`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、
   `gpt-5-mini`
 - 支持通过 `n` 返回多张生成结果
 - 支持生成可编辑 PPT 文件
@@ -130,7 +142,7 @@ environment:
 ### 在线画图功能
 
 - 内置在线画图工作台，支持生成、图片编辑与多图组图编辑
-- 支持 `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、`gpt-5-mini` 模型选择
+- 支持 `gpt-image-2`、`gpt-image-2.5`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、`gpt-5-mini` 模型选择
 - 编辑模式支持参考图上传
 - 前端支持多图生成交互
 - 本地保存图片会话历史，支持回看、删除和清空
@@ -196,7 +208,7 @@ curl http://localhost:8000/v1/models \
 
 | 字段   | 说明                                                                                                         |
 |:-----|:-----------------------------------------------------------------------------------------------------------|
-| 返回模型 | `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、`gpt-5-mini` |
+| 返回模型 | `gpt-image-2`、`gpt-image-2.5`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、`gpt-5-mini` |
 | 接入场景 | 可接入 Cherry Studio、New API 等上游或客户端                                                                          |
 
 <br>
@@ -230,7 +242,7 @@ curl http://localhost:8000/v1/images/generations \
 | `model`           | 图片模型，当前可用值以 `/v1/models` 返回结果为准，推荐使用 `gpt-image-2` |
 | `prompt`          | 图片生成提示词                                            |
 | `n`               | 生成数量，当前后端限制为 `1-4`                                 |
-| `size`            | 图片尺寸；`gpt-image-2` 请求 2K/4K 时自动切换到 Codex 生图链路       |
+| `size`            | 图片尺寸；普通模型 2K/4K 请求返回 400，显式 Codex 模型可用高分辨率       |
 | `response_format` | 当前请求模型中包含该字段，默认值为 `b64_json`                       |
 
 <br>

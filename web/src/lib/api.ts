@@ -168,6 +168,7 @@ export type SettingsConfig = {
   refresh_account_interval_minute?: number | string;
   image_retention_days?: number | string;
   image_poll_timeout_secs?: number | string;
+  image_task_timeout_secs?: number | string;
   image_account_concurrency?: number | string;
   image_parallel_generation?: boolean;
   image_settle_enabled?: boolean;
@@ -292,9 +293,13 @@ export type ImageTask = {
   conversation_id?: string;
   data?: Array<{ b64_json?: string; url?: string; revised_prompt?: string }>;
   error?: string;
+  resumable?: boolean;
+  upscale_resumable?: boolean;
+  original_url?: string;
   progress?: string;
   elapsed_secs?: number;
   duration_ms?: number;
+  stage_timings_ms?: Record<string, number>;
 };
 
 type ImageTaskListResponse = {
@@ -513,6 +518,13 @@ export async function resumeImagePoll(taskId: string, extraTimeoutSecs = 30) {
   return httpRequest<ImageTask>(`/api/image-tasks/${encodeURIComponent(taskId)}/resume-poll`, {
     method: "POST",
     body: { extra_timeout_secs: extraTimeoutSecs },
+  });
+}
+
+export async function retryImageUpscale(taskId: string) {
+  return httpRequest<ImageTask>(`/api/image-tasks/${encodeURIComponent(taskId)}/retry-upscale`, {
+    method: "POST",
+    body: {},
   });
 }
 

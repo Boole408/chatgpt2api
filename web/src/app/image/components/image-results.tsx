@@ -24,6 +24,7 @@ type ImageResultsProps = {
   onRegenerateTurn: (conversationId: string, turnId: string) => void | Promise<void>;
   onRetryImage: (conversationId: string, turnId: string, imageId: string) => void | Promise<void>;
   onTimeoutRetryContinue: (taskId: string) => void | Promise<void>;
+  onRetryUpscale: (taskId: string) => void | Promise<void>;
   onDismissErrors: (conversationId: string, turnId: string) => void | Promise<void>;
   formatConversationTime: (value: string) => string;
 };
@@ -94,6 +95,7 @@ export function ImageResults({
   onRegenerateTurn,
   onRetryImage,
   onTimeoutRetryContinue,
+  onRetryUpscale,
   onDismissErrors,
   formatConversationTime,
 }: ImageResultsProps) {
@@ -306,7 +308,7 @@ export function ImageResults({
                       }
 
                       if (image.status === "error") {
-                        const isTimeoutError = image.error?.includes("超时") && image.taskId;
+                        const isTimeoutError = image.resumable && image.error?.includes("超时") && image.taskId;
                         return (
                           <div key={image.id} className="break-inside-avoid">
                             <div
@@ -331,6 +333,15 @@ export function ImageResults({
                                     className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-medium text-emerald-600 shadow-sm transition hover:bg-emerald-200 sm:px-3 sm:text-xs"
                                   >
                                     继续等待
+                                  </button>
+                                )}
+                                {image.upscaleResumable && image.taskId && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void onRetryUpscale(image.taskId!)}
+                                    className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-medium text-emerald-600 shadow-sm transition hover:bg-emerald-200 sm:px-3 sm:text-xs"
+                                  >
+                                    仅重试超分
                                   </button>
                                 )}
                                 <button
@@ -464,6 +475,7 @@ const PROGRESS_LABELS: Record<string, string> = {
   starting_generation: "启动生成",
   generating: "生成中",
   receiving_image: "接收图片中",
+  upscaling: "图片超分中",
 };
 
 function getProgressLabel(progress?: string) {

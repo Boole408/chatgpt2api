@@ -568,6 +568,8 @@ class OpenAIBackendAPI:
             return "auto", ""
         if base_model == "gpt-image-2":
             upstream_model = config.default_upstream_model_name
+        elif base_model == "gpt-image-2.5":
+            upstream_model = "gpt-image-2.5"
         elif base_model == CODEX_IMAGE_MODEL:
             upstream_model = base_model
         else:
@@ -1045,11 +1047,11 @@ class OpenAIBackendAPI:
         ensure_ok(response, path)
         return response
 
-    def _get_conversation(self, conversation_id: str) -> Dict[str, Any]:
+    def _get_conversation(self, conversation_id: str, timeout_secs: float = 60.0) -> Dict[str, Any]:
         """获取完整 conversation 详情。"""
         path = f"/backend-api/conversation/{conversation_id}"
         response = self.session.get(self.base_url + path, headers=self._headers(path, {"Accept": "application/json"}),
-                                    timeout=60)
+                                    timeout=timeout_secs)
         ensure_ok(response, path)
         return response.json()
 
@@ -2230,7 +2232,7 @@ class OpenAIBackendAPI:
                 })
 
             try:
-                conversation = self._get_conversation(conversation_id)
+                conversation = self._get_conversation(conversation_id, timeout_secs=min(60.0, max(0.1, _remaining())))
             except UpstreamHTTPError as exc:
                 if exc.status_code in (429, 500, 502, 503, 504):
                     if _retry_sleep("upstream_status", exc.status_code, None, exc.retry_after):
@@ -2501,7 +2503,10 @@ class OpenAIBackendAPI:
                     "file_ids": file_ids,
                     "sediment_ids": sediment_ids,
                 })
-                return self._resolve_image_urls(conversation_id, file_ids, sediment_ids)
+                direct_urls = self._resolve_image_urls(conversation_id, file_ids, sediment_ids)
+                if direct_urls:
+                    return direct_urls
+                logger.info({"event": "image_direct_resolve_empty_fallback_poll", "conversation_id": conversation_id})
         if poll and conversation_id:
             logger.info({
                 "event": "image_resolve_poll_needed",
@@ -2614,7 +2619,11 @@ class OpenAIBackendAPI:
         self._report_progress("starting_generation")
         response = self._start_image_generation(prompt, requirements, conduit_token, model, references)
         self._report_progress("generating")
-        yield from self._iter_sse_payloads_capped(response, float(config.image_poll_timeout_secs))
+        hard_cap = float(config.image_poll_timeout_secs)
+        deadline = getattr(self, "_image_deadline", None)
+        if deadline is not None:
+            hard_cap = min(hard_cap, max(0.1, deadline - time.monotonic()))
+        yield from self._iter_sse_payloads_capped(response, hard_cap)
 
     def _iter_sse_payloads_capped(self, response: Any, hard_cap_secs: float) -> Iterator[str]:
         """按墙钟硬上限消费图片 SSE 流，避免上游异常时长连接被无限挂起。

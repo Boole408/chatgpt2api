@@ -7,12 +7,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from api import accounts, ai, image_tasks, system
+from api import accounts, ai, image_tasks, system, registration
 from api.errors import install_exception_handlers
 from api.support import resolve_web_asset, start_limited_account_watcher
 from services.backup_service import backup_service
 from services.config import config
 from services.image_service import start_image_cleanup_scheduler
+from services.auto_registration_service import auto_registration_service
 
 
 def create_app() -> FastAPI:
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
         try:
             yield
         finally:
+            auto_registration_service.shutdown()
             stop_event.set()
             thread.join(timeout=1)
             cleanup_thread.join(timeout=1)
@@ -44,6 +46,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(ai.create_router())
     app.include_router(accounts.create_router())
+    app.include_router(registration.create_router())
     app.include_router(image_tasks.create_router())
     app.include_router(system.create_router(app_version))
 

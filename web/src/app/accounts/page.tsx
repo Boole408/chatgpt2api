@@ -62,6 +62,7 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
 import { AccountImportDialog } from "./components/account-import-dialog";
+import { AutoRegistrationDialog } from "./components/auto-registration-dialog";
 
 const accountStatusOptions: { label: string; value: AccountStatus | "all" }[] = [
   { label: "全部状态", value: "all" },
@@ -734,6 +735,10 @@ function AccountsPageContent() {
             <RefreshCw className={cn("size-4", isRefreshing ? "animate-spin" : "")} />
             一键刷新所有账号信息和额度
           </Button>
+          <AutoRegistrationDialog
+            disabled={isLoading || isRefreshing || isDeleting}
+            onImported={() => void loadAccounts(true)}
+          />
           <AccountImportDialog
             disabled={isLoading || isRefreshing || isDeleting}
             onImported={(items) => {

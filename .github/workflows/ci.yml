@@ -26,6 +26,7 @@ jobs:
           python-version: '3.13'
       - run: uv sync --frozen
       - run: uv pip install 'pytest>=9,<10'
+      - run: uv run --no-sync python -m playwright install --with-deps chromium
       - run: uv run --no-sync python scripts/run_unit_tests.py
 
   frontend:

@@ -21,7 +21,7 @@ const labels: Record<string, string> = {
   queued: "等待中", running: "进行中", stopping: "停止中", success: "已入池", failed: "失败",
   manual_required: "需人工处理", interrupted: "已中断", cancelled: "已停止", skipped: "已跳过",
   stopped: "已停止", completed: "已完成",
-  waiting_manual: "等待人工验证",
+  waiting_manual: "等待人工处理",
 };
 const emptySettings: RegistrationSettings = {
   site_url: "https://ccmtc.cfd/mail", email: "", client_id: "", protocol: "imap", configured: false,
@@ -53,12 +53,17 @@ export function AutoRegistrationDialog({ disabled, onImported }: { disabled?: bo
   const [mailResult, setMailResult] = useState("");
   const [loadError, setLoadError] = useState("");
   const [diagnosticImage, setDiagnosticImage] = useState("");
+  const [desktopRevision, setDesktopRevision] = useState(0);
+  const [desktopOpened, setDesktopOpened] = useState(false);
   useEffect(() => () => { if (diagnosticImage) URL.revokeObjectURL(diagnosticImage); }, [diagnosticImage]);
   const fileRef = useRef<HTMLInputElement>(null);
   const importedCounts = useRef(new Map<string, number>());
   const onImportedRef = useRef(onImported);
   onImportedRef.current = onImported;
   const job = jobs.find((item) => item.id === selectedId) ?? jobs[0];
+  const manualRow = job?.rows.find((row) => row.status === "waiting_manual");
+  const desktopUrl = "/registration-desktop/vnc.html?autoconnect=1&resize=scale&path=registration-desktop/websockify";
+  const embeddedDesktop = (!!manualRow || desktopOpened) && settings.manual_available && settings.registration_driver !== "roxy";
   const active = jobs.some((item) => activeStatuses.has(item.status));
   const browserConfigured = settings.registration_driver !== "roxy" || (!!settings.has_roxy_api_token && !!settings.roxy_workspace_id);
   const loadBrowserSettings = (saved: RegistrationSettings) => {
@@ -250,16 +255,25 @@ export function AutoRegistrationDialog({ disabled, onImported }: { disabled?: bo
                 <span className="text-sm text-stone-500">{labels[job.status] ?? job.status} · {job.status === "waiting_manual" ? "整个批次已暂停，原浏览器会话保留" : "关闭弹窗后任务保留"}</span>
               </div>
               <div className="grid grid-cols-4 gap-2">{[["总数", job.total], ["成功", job.success], ["失败 / 中断", job.failed], ["剩余", job.remaining]].map(([label, value]) => <div key={label} className="rounded-xl bg-stone-50 p-3"><div className="text-xs text-stone-500">{label}</div><div className="mt-1 text-xl font-semibold">{value}</div></div>)}</div>
+              {settings.manual_available && settings.registration_driver !== "roxy" && !embeddedDesktop && <Button variant="outline" onClick={() => setDesktopOpened(true)}>打开实时桌面</Button>}
+              {embeddedDesktop && <section className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/40 p-3" aria-label="实时验证桌面">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div><h3 className="font-medium">实时浏览器 · {manualRow?.email ?? "注册桌面"}</h3><p className="mt-1 text-xs text-stone-600">直接在下方操作浏览器，手动完成安全验证。{manualRow?.manual_expires_at && `会话保留至 ${new Date(manualRow.manual_expires_at * 1000).toLocaleTimeString()}。`}</p></div>
+                  <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" asChild><a href={desktopUrl} target="_blank" rel="noopener noreferrer">打开独立桌面 / 登录</a></Button><Button variant="outline" size="sm" onClick={() => setDesktopRevision((value) => value + 1)}>重新连接</Button></div>
+                </div>
+                <iframe key={`${manualRow?.id ?? "desktop"}-${desktopRevision}`} src={desktopUrl} title="可交互的注册浏览器桌面" className="h-[55vh] min-h-80 w-full rounded-lg border bg-stone-950" allow="fullscreen" />
+                <div className="flex flex-wrap items-center gap-3">{manualRow && <Button disabled={!!busy} onClick={() => void operate("continue", async () => { updateJob(await registrationManualAction(job.id, manualRow.id, "continue")); })}>已处理，继续注册</Button>}{!manualRow && <p className="text-xs text-amber-800">当前没有等待处理的浏览器会话；已超时或失败的账号需要先重试。</p>}<p className="text-xs text-stone-600">若下方未连接，请先点“打开独立桌面 / 登录”，登录后点“重新连接”。关闭弹窗不会停止任务。</p></div>
+              </section>}
               <div className="max-h-[42vh] overflow-auto rounded-xl border">
                 <table className="w-full text-left text-sm"><thead className="sticky top-0 bg-stone-50 text-xs text-stone-500"><tr><th className="p-3">邮箱 / 资料</th><th className="p-3">状态</th><th className="p-3">进度 / 原因</th></tr></thead>
                   <tbody>{job.rows.map((row) => <tr key={row.id} className="border-t align-top"><td className="p-3"><div className="break-all font-medium">{row.email}</div><div className="mt-1 text-xs text-stone-400">{row.name} · {row.age} 岁</div></td>
                     <td className={cn("whitespace-nowrap p-3", row.status === "success" ? "text-emerald-700" : row.error ? "text-rose-600" : "text-stone-500")}>{row.status === "running" && <LoaderCircle className="mr-1 inline size-3 animate-spin" />}{labels[row.status] ?? row.status}</td>
                     <td className="min-w-48 p-3"><p>{row.message}</p>{row.warning && <p className="mt-1 text-xs text-amber-700">{row.warning}</p>}
                       {row.status === "waiting_manual" && <div className="mt-3 space-y-2 rounded-lg bg-amber-50 p-3">
-                        <p className="text-xs text-amber-800">在运行服务的电脑上完成 Chromium 安全验证。{row.manual_expires_at && `会话保留至 ${new Date(row.manual_expires_at * 1000).toLocaleTimeString()}。`}等待期间不注册其他邮箱。</p>
-                        <div className="flex flex-wrap gap-2">{([["show", "显示验证窗口"], ["continue", "已完成验证，继续"], ["cancel", "取消此账号"]] as const).map(([action, label]) => <Button key={action} variant={action === "continue" ? "default" : "outline"} size="sm" disabled={!!busy} onClick={() => void operate(action, async () => { updateJob(await registrationManualAction(job.id, row.id, action)); })}>{label}</Button>)}</div>
+                        <p className="text-xs text-amber-800">在实时浏览器中手动处理页面提示。{row.manual_expires_at && `会话保留至 ${new Date(row.manual_expires_at * 1000).toLocaleTimeString()}。`}等待期间不注册其他邮箱。</p>
+                        <div className="flex flex-wrap gap-2">{([["show", "显示浏览器窗口"], ["continue", "已处理，继续"], ["cancel", "取消此账号"]] as const).map(([action, label]) => <Button key={action} variant={action === "continue" ? "default" : "outline"} size="sm" disabled={!!busy} onClick={() => void operate(action, async () => { updateJob(await registrationManualAction(job.id, row.id, action)); })}>{label}</Button>)}</div>
                       </div>}
-                      {row.diagnostics && <details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer">查看阻断诊断</summary><p className="mt-2 break-all">{row.diagnostics.title} · {row.diagnostics.url}</p><p>{new Date(row.diagnostics.time * 1000).toLocaleString()}</p>{row.diagnostics.failures.map((item, index) => <p key={index} className="break-all">{item.status} · {item.url}</p>)}{row.diagnostics.screenshot && <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void operate("diagnostic", async () => setDiagnosticImage(await fetchRegistrationDiagnosticImage(job.id, row.id)))}>查看脱敏截图</Button>}</details>}
+                      {row.diagnostics && <details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer">查看阻断诊断</summary><p className="mt-2 break-all">{row.diagnostics.title} · {row.diagnostics.url}</p>{row.diagnostics.error_text && <p className="mt-2 whitespace-pre-wrap break-all">{row.diagnostics.error_text}</p>}<p>{new Date(row.diagnostics.time * 1000).toLocaleString()}</p>{row.diagnostics.failures.map((item, index) => <p key={index} className="break-all">{item.status} · {item.url}</p>)}{row.diagnostics.screenshot && <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void operate("diagnostic", async () => setDiagnosticImage(await fetchRegistrationDiagnosticImage(job.id, row.id)))}>查看脱敏截图</Button>}</details>}
                       <div className="mt-2 flex gap-3 text-xs">{([["注册", row.registered], ["授权", row.authorized], ["入池", row.imported]] as const).map(([label, done]) => <span key={label} className={done ? "text-emerald-600" : "text-stone-300"}>{done && <Check className="mr-1 inline size-3" />}{label}</span>)}</div></td></tr>)}</tbody>
                 </table>
               </div>

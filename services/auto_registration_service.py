@@ -258,6 +258,15 @@ class AutoRegistrationService:
             return path
 
     def _run(self, job_id: str, stop: threading.Event) -> None:
+        import random, os
+        from services.proxy_service import registration_proxy_ctx
+        reg_host = os.environ.get("CHATGPT2API_REGISTRATION_PROXY_HOST", "registration-proxy")
+        proxy_count = 0
+        try:
+            with open("data/proxy_count.txt", "r") as pf:
+                proxy_count = int(pf.read().strip())
+        except Exception:
+            pass
         with self.lock:
             job = self._get(job_id)
             job["status"] = "running"
@@ -266,6 +275,10 @@ class AutoRegistrationService:
         for row in job["rows"]:
             if row["status"] != "queued":
                 continue
+            # Pick a dedicated proxy for this account's entire registration session
+            if proxy_count > 0:
+                port = 10811 + random.randint(0, proxy_count - 1)
+                registration_proxy_ctx.set(f"http://{reg_host}:{port}")
             deadline = time.monotonic() + 600
 
             def check():
@@ -290,13 +303,30 @@ class AutoRegistrationService:
                 directory.mkdir(mode=0o700, exist_ok=True)
                 path = directory / f"{row['id']}.png"
                 captured = False
+                error_text = ""
+                try:
+                    texts = []
+                    for frame in page.frames[:5]:
+                        try:
+                            texts.append(frame.locator("body").inner_text(timeout=1000))
+                        except Exception:
+                            pass
+                    error_text = "\n".join(texts)
+                    for key in ("password", "refresh_token", "client_id", "registration_password"):
+                        secret = settings.get(key)
+                        if secret:
+                            error_text = error_text.replace(secret, "[redacted]")
+                    error_text = re.sub(r"https?://[^\s]+", lambda match: safe_location(match.group()), error_text)
+                    error_text = re.sub(r"[^\s]*@[^\s]*|\b\d{6}\b|[A-Za-z0-9_.-]{40,}", "[redacted]", error_text)[:1200]
+                except Exception:
+                    pass
                 try:
                     page.screenshot(path=str(path), mask=[page.locator('input, textarea, [contenteditable="true"]'), page.get_by_text(re.compile(r"@|\b\d{6}\b|Bearer |M\\.", re.I))])
                     path.chmod(0o600)
                     captured = True
                 except Exception:
                     path.unlink(missing_ok=True)
-                update(diagnostics={"reason": reason, "url": safe_location(page.url), "title": title, "time": time.time(), "failures": failures[-20:], "screenshot": captured})
+                update(diagnostics={"reason": reason, "url": safe_location(page.url), "title": title, "error_text": error_text, "time": time.time(), "failures": failures[-20:], "screenshot": captured})
 
             def manual(reason, page):
                 nonlocal deadline

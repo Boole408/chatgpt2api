@@ -15,7 +15,7 @@ export type RegistrationRow = {
   message: string; error?: string; warning?: string;
   registered: boolean; authorized: boolean; imported: boolean;
   manual_expires_at?: number;
-  diagnostics?: { reason: string; url: string; title: string; time: number; screenshot: boolean; failures: {url: string; status: number | string}[] };
+  diagnostics?: { reason: string; url: string; title: string; error_text?: string; time: number; screenshot: boolean; failures: {url: string; status: number | string}[] };
 };
 export type RegistrationJob = {
   id: string; status: string; created_at: number; rows: RegistrationRow[];

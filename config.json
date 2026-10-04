@@ -12,7 +12,7 @@
     "info",
     "warning"
   ],
-  "proxy": "",
+  "proxy": "http://127.0.0.1:7897",
   "proxy_runtime": {
     "enabled": false,
     "egress_mode": "single_proxy",

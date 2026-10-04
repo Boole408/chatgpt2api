@@ -1,0 +1,43 @@
+services:
+  app:
+    ipc: shareable
+    environment:
+      DISPLAY: ':99'
+      CHATGPT2API_REGISTRATION_HEADLESS: 'false'
+    volumes:
+      - registration-x11:/tmp/.X11-unix:ro
+    ports:
+      - '127.0.0.1:16080:6080'
+
+  registration-desktop:
+    build:
+      context: ./deploy/registration-desktop
+      args:
+        APP_IMAGE: ${REGISTRATION_DESKTOP_BASE_IMAGE:-python:3.13-slim}
+    image: chatgpt2api-registration-desktop:local
+    restart: unless-stopped
+    network_mode: service:app
+    ipc: service:app
+    volumes:
+      - registration-x11:/tmp/.X11-unix
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import pathlib, urllib.request; assert pathlib.Path('/tmp/.X11-unix/X99').is_socket(); urllib.request.urlopen('http://127.0.0.1:6080/vnc.html', timeout=5).read(1)"
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+volumes:
+  registration-x11:

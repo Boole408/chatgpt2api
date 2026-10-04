@@ -351,6 +351,21 @@ export async function createAccounts(tokens: string[], accounts: AccountImportPa
   });
 }
 
+export async function downloadAccountExport(accessTokens: string[]) {
+  const data = await httpRequest<AccountImportPayload | AccountImportPayload[]>("/api/accounts/export", {
+    method: "POST", body: { access_tokens: accessTokens, format: "json" },
+  });
+  const blob = new Blob([JSON.stringify(data, null, 2) + "\n"], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `accounts-${Date.now()}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export type OAuthLoginStartResponse = {
   session_id: string;
   authorize_url: string;

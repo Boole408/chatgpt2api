@@ -164,7 +164,20 @@ class RegistrationBrowser:
                 page.set_default_timeout(5000)
                 page.set_default_navigation_timeout(20000)
                 failures = []
-                context.on("response", lambda response: failures.append({"url": safe_location(response.url), "status": response.status}) if response.status >= 400 and len(failures) < 20 else None)
+                delivery_status = None
+                authentication_status = None
+
+                def record_response(response):
+                    nonlocal delivery_status, authentication_status
+                    url = safe_location(response.url)
+                    if urlparse(response.url).path == "/api/accounts/passwordless/send-otp":
+                        delivery_status = response.status
+                    if urlparse(response.url).path == "/api/auth/signin/openai":
+                        authentication_status = response.status
+                    if response.status >= 400 and len(failures) < 20:
+                        failures.append({"url": url, "status": response.status})
+
+                context.on("response", record_response)
                 context.on("requestfailed", lambda request: failures.append({"url": safe_location(request.url), "status": "network_failed"}) if len(failures) < 20 else None)
 
                 def intercept(route):
@@ -201,13 +214,20 @@ class RegistrationBrowser:
                 otp_deadline = None
                 otp_submitted_at = 0.0
                 otp_attempts = 0
+                delivery_retries = 0
                 profile_submitted = False
                 consent_submitted = False
                 challenge_started = None
                 while not callback:
                     check()
                     text = page.locator("body").inner_text(timeout=5000)
-                    if re.search(r"checking your browser|verify you are human|security verification|enable javascript and cookies|sorry, you have been blocked|正在进行安全验证|验证您是人类", text, re.I) or re.search(r"just a moment", page.title(), re.I) or first_visible(page.locator('iframe[src*="challenges.cloudflare.com"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"]')):
+                    blocked = re.search(r"sorry,? you have been blocked|access denied|访问被拒绝", text, re.I)
+                    upstream_error = re.search(r"oops,? an error occurred", page.title(), re.I)
+                    if blocked or upstream_error:
+                        if diagnose:
+                            diagnose(page, "access_blocked" if blocked else "upstream_error", failures)
+                        raise ManualRequired("OpenAI 拒绝访问，请查看诊断；此页不是可完成的人机验证" if blocked else "OpenAI 返回错误页，注册无法继续；请查看诊断，此页不是可完成的人机验证")
+                    if re.search(r"checking your browser|verify you are human|security verification|enable javascript and cookies|正在进行安全验证|验证您是人类", text, re.I) or re.search(r"just a moment", page.title(), re.I) or first_visible(page.locator('iframe[src*="challenges.cloudflare.com"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"]')):
                         if challenge_started is None:
                             challenge_started = time.monotonic()
                         if time.monotonic() - challenge_started >= 10:
@@ -231,6 +251,14 @@ class RegistrationBrowser:
                         mailbox.sleep(0.5)
                         continue
                     challenge_started = None
+                    if authentication_status is not None and authentication_status >= 400 and first_visible(page.locator('input[type="email"]')):
+                        reason = f"OpenAI 登录入口请求失败（HTTP {authentication_status}），尚未进入验证码发送步骤"
+                        if diagnose:
+                            diagnose(page, "authentication_request_failed", failures)
+                        if not interactive:
+                            raise ManualRequired(reason)
+                        manual(reason + "；请在原浏览器检查后点击继续", page)
+                        continue
                     if password_submitted and password_is_signup and not row.get("password_set") and first_visible(page.locator('input[type="password"]')) is None:
                         update(password_set=True, _registration_password=settings.get("registration_password", ""))
                     if not oauth_started and page.url.startswith(registration_origin + "/") and urlparse(page.url).path != "/auth/login" and not first_visible(page.locator('input[type="email"], input[type="password"], input[name="name"], input[autocomplete="name"]')) and not otp_inputs(page):
@@ -250,9 +278,33 @@ class RegistrationBrowser:
                             signup_selected = True
                             otp_deadline = None
                             otp_attempts = 0
+                            delivery_status = None
+                            delivery_retries = 0
                             page.goto(oauth_data["authorize_url"], wait_until="domcontentloaded")
                             continue
                     fields = otp_inputs(page)
+                    delivery_failed = (delivery_status is not None and delivery_status >= 400) or re.search(r"(?:couldn['’]t|could not|unable to|failed to) send (?:your |the |a )?(?:code|email)|无法发送.*(?:验证码|邮件)|验证码发送失败", text, re.I)
+                    if fields and not otp_submitted and delivery_failed:
+                        resend = first_visible(page.get_by_role("button", name=re.compile(r"resend|send (?:a )?(?:new |another )?code|重新发送|重发|再送信", re.I)))
+                        if resend is None:
+                            resend = first_visible(page.get_by_role("link", name=re.compile(r"resend|重新发送|重发|再送信", re.I)))
+                        if delivery_retries < 2 and resend is not None and resend.is_enabled():
+                            delivery_retries += 1
+                            update(stage="resending_code", message=f"OpenAI 未能发送验证码，5 秒后重发（{delivery_retries}/2）")
+                            mailbox.sleep(5)
+                            baseline.update(message["id"] for message in mailbox.read())
+                            sent_at = time.time()
+                            delivery_status = None
+                            resend.click()
+                            mailbox.sleep(1)
+                            continue
+                        reason = f"OpenAI 验证码发送失败（HTTP {delivery_status}），尚未发出邮件" if delivery_status is not None and delivery_status >= 400 else "OpenAI 页面提示无法发送验证码，尚未发出邮件"
+                        if diagnose:
+                            diagnose(page, "otp_delivery_failed", failures)
+                        if not interactive:
+                            raise ManualRequired(reason)
+                        manual(reason + "；请在原浏览器处理后点击继续", page)
+                        continue
                     if (first_visible(page.locator('input[type="tel"], input[autocomplete="tel"]')) and not fields) or re.search(r"verify your phone|验证您的手机", text, re.I):
                         raise ManualRequired("页面要求手机验证，需要人工处理")
                     if re.search(r"too many requests|too many attempts", text, re.I):

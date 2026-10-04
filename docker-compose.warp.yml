@@ -82,6 +82,25 @@ services:
       retries: 5
       start_period: 30s
 
+
+  registration-proxy:
+    image: python:3.13-slim
+    container_name: chatgpt2api-registration-proxy
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      CHATGPT2API_REGISTRATION_SUBSCRIPTION_URL: ${CHATGPT2API_REGISTRATION_SUBSCRIPTION_URL:-}
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./data:/app/data
+    command: ["python3", "/app/scripts/registration_proxy.py"]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.create_connection(('127.0.0.1', 10811), 5); s.close()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
   app:
     build:
       context: .
@@ -96,6 +115,8 @@ services:
         condition: service_started
       flaresolverr:
         condition: service_started
+      registration-proxy:
+        condition: service_started
     ports:
       - "${CHATGPT2API_PORT:-3000}:80"
     volumes:
@@ -106,3 +127,4 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       CHATGPT2API_AUTH_KEY: ${CHATGPT2API_AUTH_KEY:-}
       CHATGPT2API_BASE_URL: ${CHATGPT2API_BASE_URL:-}
+      CHATGPT2API_REGISTRATION_PROXY_URL: http://registration-proxy:10811

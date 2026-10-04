@@ -13,6 +13,9 @@ from urllib.parse import quote, urlparse
 
 from curl_cffi.requests import Session
 
+import contextvars
+registration_proxy_ctx = contextvars.ContextVar("registration_proxy", default="")
+
 from services.config import config
 
 
@@ -196,6 +199,9 @@ class ProxySettingsStore:
         if account_proxy:
             selected_proxy = account_proxy
             source = "account"
+        elif registration_proxy_ctx.get():
+            selected_proxy = registration_proxy_ctx.get()
+            source = "registration"
         elif runtime_proxy:
             selected_proxy = runtime_proxy
             source = runtime_proxy_source

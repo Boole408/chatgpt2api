@@ -1149,9 +1149,8 @@ class AccountService:
         # CPA/Codex 导出文件里的 `type=codex` 是导出格式，不是号池套餐类型。
         if str(payload.get("type") or "").strip().lower() == "codex":
             payload["export_type"] = "codex"
-            payload["source_type"] = "codex"
             payload.pop("type", None)
-        if str(payload.get("export_type") or "").strip().lower() == "codex":
+        if not str(payload.get("source_type") or "").strip() and str(payload.get("export_type") or "").strip().lower() == "codex":
             payload["source_type"] = "codex"
         if payload.get("plan_type") and not payload.get("type"):
             payload["type"] = str(payload.get("plan_type") or "").strip()
@@ -1700,6 +1699,7 @@ class AccountService:
             )
             item = {
                 "type": str(account.get("export_type") or "codex"),
+                "source_type": self._normalize_source_type(account.get("source_type")),
                 "email": email,
                 "account_id": account_id,
                 "access_token": access_token,

@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/select";
 import {
   deleteAccounts,
+  downloadAccountExport,
   fetchAccounts,
   fetchModels,
   fetchRefreshProgress,
@@ -185,6 +186,19 @@ function AccountsPageContent() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshingTokens, setRefreshingTokens] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const handleExportAccounts = async (tokens: string[]) => {
+    if (!tokens.length || isExporting) return;
+    setIsExporting(true);
+    try {
+      await downloadAccountExport(tokens);
+      toast.success("账号 JSON 已导出");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "导出账号失败");
+    } finally {
+      setIsExporting(false);
+    }
+  };
   const [isUpdating, setIsUpdating] = useState(false);
   const [isRelogining, setIsRelogining] = useState(false);
   const [progress, setProgress] = useState<{
@@ -756,6 +770,9 @@ function AccountsPageContent() {
             <Download className="size-4" />
             导出全部 Token
           </Button>
+          <Button variant="outline" disabled={accounts.length === 0 || isExporting} onClick={() => void handleExportAccounts(accounts.map((item) => item.access_token))} title="导出完整账号，保留来源类型和刷新凭据">
+            <Download className="size-4" />导出全部账号 JSON
+          </Button>
         </div>
       </section>
 
@@ -994,6 +1011,7 @@ function AccountsPageContent() {
           <CardContent className="space-y-0 p-0">
             <div className="flex flex-col gap-3 border-b border-stone-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-wrap items-center gap-2 text-sm text-stone-500">
+                <Button variant="ghost" className="h-8 rounded-lg px-3" disabled={!selectedTokens.length || isExporting} onClick={() => void handleExportAccounts(selectedTokens)} title="导出完整账号，保留来源类型和刷新凭据"><Download className="size-4" />导出所选 JSON</Button>
                 <Button
                   variant="ghost"
                   className="h-8 rounded-lg px-3 text-stone-500 hover:bg-stone-100"

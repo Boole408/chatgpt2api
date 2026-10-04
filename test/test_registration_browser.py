@@ -22,6 +22,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         self.paths.append(path)
+        if path in {"/api/accounts/passwordless/send-otp", "/api/auth/signin/openai"}:
+            self.send_response(403)
+            self.end_headers()
+            self.wfile.write(b'{"error":"blocked"}')
+            return
         if path == "/manual-status":
             self.send_response(200)
             self.end_headers()
@@ -42,6 +47,10 @@ class Handler(BaseHTTPRequestHandler):
             "/email-choice": '<form action="/signup"><button type="submit">Continue with email</button></form>',
             "/script-blocked": '<p>Enable JavaScript and cookies to continue</p>',
             "/stalled-otp": '<form action="/stalled-otp"><input name="otp" autocomplete="one-time-code"><button type="submit">Verify</button></form>',
+            "/delivery-failed": '<p>We couldn\'t send your code. Select Resend email to try again.</p><input name="otp" autocomplete="one-time-code"><form action="/delivery-failed"><button>Resend email</button></form>',
+            "/delivery-recover": '<p>We couldn\'t send your code. Select Resend email to try again.</p><input name="otp" autocomplete="one-time-code"><form action="/verify"><button>Resend email</button></form>',
+            "/delivery-http": '<p>Loading</p><script>fetch("/api/accounts/passwordless/send-otp").then(()=>{document.body.innerHTML=\'<input name="otp" autocomplete="one-time-code">\'})</script>',
+            "/authentication-http": '<p>Loading</p><script>fetch("/api/auth/signin/openai").then(()=>{document.body.innerHTML=\'<input type="email">\'})</script>',
             "/resent": '<form action="/retry-code"><label>Code<input name="otp" autocomplete="one-time-code" required></label><button type="submit">Verify</button></form>',
             "/signup-session": '<form action="/home"><label>Email<input type="email" name="email"></label><button type="submit">Continue</button></form>',
             "/home": '<h1>ChatGPT</h1>',
@@ -57,6 +66,8 @@ class Handler(BaseHTTPRequestHandler):
             "/password": '<form action="/verify"><label>Create password<input type="password" name="password" required></label><button type="submit">Continue</button></form><p>Create your password</p>',
             "/existing": '<label>Password<input type="password"></label><p>Sign in</p>',
             "/challenge": '<h1>Verify you are human</h1>',
+            "/blocked": '<h1>Sorry, you have been blocked</h1>',
+            "/upstream-error": '<title>Oops, an error occurred! - OpenAI</title><p>Verify you are human</p>',
             "/phone": '<label>Phone<input type="tel"></label>',
             "/birthday": '<label>Full name<input name="name"></label><label>Birthday<input type="date" name="birthday"></label>',
         }
@@ -93,9 +104,9 @@ class BrowserDriverTests(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join()
 
-    def run_fixture(self, path, *, fast_clock=False, codes=None, authorize_path=None):
+    def run_fixture(self, path, *, fast_clock=False, codes=None, authorize_path=None, mailbox=None):
         row = {"email": "target@example.com", "name": "Oliver Smith", "age": 31, "birthday": "1995-10-03", "registered": False}
-        mailbox = mock.Mock()
+        mailbox = mailbox or mock.Mock()
         mailbox.read.return_value = []
         mailbox.wait_code.return_value = "123456"
         if codes:
@@ -199,6 +210,32 @@ class BrowserDriverTests(unittest.TestCase):
         self.assertEqual(sum(item.get("stage") == "retrying_code" for item in updates), 1)
         self.assertIn("/resent", Handler.paths)
 
+    def test_delivery_failure_never_waits_for_unsent_mail(self):
+        mailbox = mock.Mock()
+        Handler.paths.clear()
+        with self.assertRaisesRegex(ManualRequired, "无法发送验证码"):
+            self.run_fixture("/delivery-failed", mailbox=mailbox, fast_clock=True)
+        mailbox.wait_code.assert_not_called()
+        self.assertEqual(Handler.paths.count("/delivery-failed"), 3)
+
+    def test_delivery_resend_recovers_then_reads_code(self):
+        _, row, mailbox, updates = self.run_fixture("/delivery-recover", fast_clock=True)
+        self.assertTrue(row["registered"])
+        mailbox.wait_code.assert_called_once()
+        self.assertEqual(sum(item.get("stage") == "resending_code" for item in updates), 1)
+
+    def test_delivery_http_failure_is_detected_without_page_error_text(self):
+        mailbox = mock.Mock()
+        with self.assertRaisesRegex(ManualRequired, "HTTP 403"):
+            self.run_fixture("/delivery-http", mailbox=mailbox, fast_clock=True)
+        mailbox.wait_code.assert_not_called()
+
+    def test_authentication_http_failure_is_reported_before_mail_polling(self):
+        mailbox = mock.Mock()
+        with self.assertRaisesRegex(ManualRequired, "登录入口请求失败.*HTTP 403"):
+            self.run_fixture("/authentication-http", mailbox=mailbox, fast_clock=True)
+        mailbox.wait_code.assert_not_called()
+
     def test_unknown_existing_password_needs_manual_handling(self):
         with self.assertRaisesRegex(ManualRequired, "未知密码"):
             self.run_fixture("/existing")
@@ -208,6 +245,11 @@ class BrowserDriverTests(unittest.TestCase):
             self.run_fixture("/challenge", fast_clock=True)
         with self.assertRaisesRegex(ManualRequired, "安全验证"):
             self.run_fixture("/script-blocked", fast_clock=True)
+
+    def test_blocked_and_error_pages_do_not_request_challenge_completion(self):
+        for path in ["/blocked", "/upstream-error"]:
+            with self.subTest(path=path), self.assertRaisesRegex(ManualRequired, "不是可完成的人机验证"):
+                self.run_fixture(path, fast_clock=True)
         with self.assertRaisesRegex(ManualRequired, "手机验证"):
             self.run_fixture("/phone")
 

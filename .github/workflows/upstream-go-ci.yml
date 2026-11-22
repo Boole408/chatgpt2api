@@ -1,0 +1,33 @@
+name: Upstream Go CI
+
+on:
+  pull_request:
+    paths:
+      - 'upstream-go/**'
+      - 'scripts/run_upstream_go.sh'
+      - '.github/workflows/upstream-go-ci.yml'
+  push:
+    paths:
+      - 'upstream-go/**'
+      - 'scripts/run_upstream_go.sh'
+      - '.github/workflows/upstream-go-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: upstream-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: upstream-go/go.mod
+          cache-dependency-path: upstream-go/go.sum
+      - run: go test ./...
+      - run: node --check web/index.js
+      - run: sh -n ../scripts/run_upstream_go.sh

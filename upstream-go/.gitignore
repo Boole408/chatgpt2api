@@ -1,0 +1,28 @@
+.idea
+data
+config.yaml
+
+.claude/settings.local.json
+
+# Environment variables
+.env
+.env.local
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Git cache
+git_cache/
+
+# 调试/测试输出目录
+loginwithpassword_*/
+logwithemailverifycode_*/
+test_batch_output/
+har
+
+debug
+.claude
+artifacts
+.DS_Store

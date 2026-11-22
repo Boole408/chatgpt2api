@@ -3,9 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#ffffff">
-  <title>ChatGPT2API</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg%20fill%3D%22currentColor%22%20fill-rule%3D%22evenodd%22%20height%3D%221em%22%20style%3D%22flex%3Anone%3Bline-height%3A1%22%20viewBox%3D%220%200%2024%2024%22%20width%3D%221em%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Ctitle%3EOpenAI%3C%2Ftitle%3E%3Cpath%20d%3D%22M9.205%208.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357%201.356-.523%202.117-.523%202.854%200%204.662%202.212%204.662%204.566%200%20.167%200%20.357-.024.547l-4.71-2.759a.797.797%200%2000-.856%200l-5.97%203.473zm10.609%208.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473%201.95-1.118a.433.433%200%2001.476%200l4.543%202.617c1.309.76%202.189%202.378%202.189%203.948%200%201.808-1.07%203.473-2.76%204.163zM7.802%2012.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545%201.95-4.472%204.591-4.472%201%200%201.927.333%202.712.928L8.23%205.067c-.285.166-.428.404-.428.737v6.898zM12%2015.128l-2.795-1.57v-3.33L12%208.658l2.795%201.57v3.33L12%2015.128zm1.796%207.23c-1%200-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974%201.142c.167.095.238.238.238.428v5.233c0%202.545-1.974%204.472-4.614%204.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482%204.482%200%20014.21%206.327v5.423c0%20.333.143.571.428.738l5.947%203.449-1.95%201.118a.432.432%200%2001-.476%200zm-.262%203.9c-2.688%200-4.662-2.021-4.662-4.519%200-.19.024-.38.047-.57l4.686%202.71c.286.167.571.167.856%200l5.97-3.448v2.26c0%20.19-.07.333-.237.428l-4.543%202.616c-.619.357-1.356.523-2.117.523zm5.899%202.83a5.947%205.947%200%20005.827-4.756C22.287%2018.339%2024%2015.84%2024%2013.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498%200-3.401-2.759-5.947-5.946-5.947-.642%200-1.26.095-1.88.31A5.962%205.962%200%200010.205%200a5.947%205.947%200%2000-5.827%204.757C1.713%205.447%200%207.945%200%2010.49c0%201.666.713%203.283%201.998%204.448-.119.5-.19%201-.19%201.499%200%203.401%202.759%205.946%205.946%205.946.642%200%201.26-.095%201.88-.309a5.96%205.96%200%20004.162%201.713z%22%3E%3C%2Fpath%3E%3C%2Fsvg%3E">
+  <meta name="theme-color" content="#f4f5f7">
+  <title>像素池 PixelPool</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/logo.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.8.0/daisyui.css">
   <link rel="stylesheet" href="/index.css">
   <script type="importmap">
@@ -31,7 +32,9 @@
     <div class="drawer-content shell-content">
       <div class="mobile-bar" x-show="$store.app.nav" x-cloak>
         <label for="nav-drawer" class="btn btn-ghost btn-sm btn-square" aria-label="打开导航"><ui-icon name="menu"></ui-icon></label>
-        <span class="brand-name">ChatGPT2API</span>
+        <img src="/logo.png" alt="像素池 PixelPool" class="brand-logo-img brand-logo-sm">
+        <span class="brand-name">像素池</span>
+        <span class="brand-name-en">PixelPool</span>
         <span class="spacer"></span>
         <button type="button" class="btn btn-ghost btn-sm btn-square" aria-label="切换主题" @click="$store.app.toggleTheme()"><ui-icon :name="$store.app.theme === 'dark' ? 'sun' : 'moon'" class="icon-sm"></ui-icon></button>
       </div>
@@ -42,13 +45,13 @@
       <label for="nav-drawer" class="drawer-overlay" aria-label="关闭导航"></label>
       <aside class="sidebar">
         <div class="brand">
-          <span class="brand-mark"><ui-icon name="layers" class="icon-sm"></ui-icon></span>
+          <img src="/logo.png" alt="像素池 PixelPool" class="brand-logo-img">
           <div class="brand-meta">
             <div class="brand-top">
-              <span class="brand-name">ChatGPT2API</span>
+              <span class="brand-name">像素池</span>
             </div>
             <div class="brand-sub-row">
-              <span class="brand-sub">AI 网关</span>
+              <span class="brand-sub">PixelPool</span>
               <button type="button" class="brand-version" x-text="'v' + ($store.app.version || '2.1')" :data-new="$store.app.hasUpdate" @click="$store.app.openReleases()"></button>
             </div>
           </div>
@@ -178,8 +181,8 @@
     <div class="login" x-data="login">
       <form class="login-card vstack vstack-lg" @submit.prevent="submit">
         <div class="vstack login-hero">
-          <ui-icon name="openai" class="login-logo"></ui-icon>
-          <h1 class="login-title">ChatGPT2API</h1>
+          <img src="/logo.png" alt="像素池 PixelPool" class="login-logo-img">
+          <h1 class="login-title">像素池 <span class="login-title-en">PixelPool</span></h1>
           <p class="login-sub">对话、生图、文件与语音，一个密钥全部搞定</p>
         </div>
         <div class="field">
@@ -320,10 +323,17 @@
 
       <aside class="chat-side" :class="{ open: sideOpen }">
         <div class="brand" x-show="!$store.app.admin" x-cloak>
-          <span class="brand-name">ChatGPT2API</span>
-          <button type="button" class="brand-version" x-text="'v' + $store.app.version" :data-new="$store.app.hasUpdate" @click="$store.app.openReleases()"></button>
-          <span class="spacer"></span>
-          <a class="btn btn-ghost btn-xs btn-square tooltip tooltip-bottom" data-tip="GitHub" href="https://github.com/basketikun/chatgpt2api" target="_blank" rel="noreferrer" aria-label="GitHub"><ui-icon name="github" class="icon-sm"></ui-icon></a>
+          <img src="/logo.png" alt="像素池 PixelPool" class="brand-logo-img brand-logo-sm">
+          <div class="brand-meta">
+            <div class="brand-top">
+              <span class="brand-name">像素池</span>
+            </div>
+            <div class="brand-sub-row">
+              <span class="brand-sub">PixelPool</span>
+              <button type="button" class="brand-version" x-text="'v' + ($store.app.version || '2.1')" :data-new="$store.app.hasUpdate" @click="$store.app.openReleases()"></button>
+            </div>
+          </div>
+          <button type="button" class="btn btn-ghost btn-xs btn-square tooltip tooltip-bottom" :data-tip="$store.app.theme === 'dark' ? '切换浅色模式' : '切换深色模式'" aria-label="切换主题" @click="$store.app.toggleTheme()"><ui-icon :name="$store.app.theme === 'dark' ? 'sun' : 'moon'" class="icon-sm"></ui-icon></button>
           <button type="button" class="btn btn-ghost btn-xs btn-square tooltip tooltip-bottom" data-tip="退出登录" aria-label="退出登录" @click="$store.app.logout()"><ui-icon name="log-out" class="icon-sm"></ui-icon></button>
         </div>
         <button type="button" class="btn btn-sm chat-new" @click="newRecord()"><ui-icon name="square-pen" class="icon-sm"></ui-icon>新建</button>

@@ -403,6 +403,7 @@ Alpine.data("login", () => ({
       const data = await api("/auth/login", { method: "POST", body: {}, key: this.key });
       session.set({ key: this.key, role: data.role, name: data.name });
       this.$go("/");
+      Alpine.store("app").refreshPoolSummary();
     } catch (error) {
       this.error = error.message;
     } finally {
@@ -415,6 +416,7 @@ Alpine.data("login", () => ({
 Alpine.data("overview", () => {
   let chart;
   const timers = {};
+  let onThemeChange;
 
   return {
     period: "24h",
@@ -429,6 +431,13 @@ Alpine.data("overview", () => {
     init() {
       this.poll("calls", 30000);
       this.poll("system", 5000);
+      onThemeChange = () => {
+        if (!this.calls) return;
+        chart?.destroy();
+        chart = undefined;
+        this.drawChart();
+      };
+      window.addEventListener("themechange", onThemeChange);
       this.$watch("period", () => {
         chart?.destroy();
         chart = undefined;
@@ -440,6 +449,7 @@ Alpine.data("overview", () => {
 
     destroy() {
       Object.values(timers).forEach(clearTimeout);
+      if (onThemeChange) window.removeEventListener("themechange", onThemeChange);
       chart?.destroy();
     },
 
@@ -469,13 +479,19 @@ Alpine.data("overview", () => {
 
     rate: (value) => value === null ? "—" : `${value.toFixed(1)}%`,
 
+    modelShare(model) {
+      const total = this.calls?.summary?.total || 0;
+      if (!total) return 0;
+      return Math.min(100, Math.max(2, Math.round((model.total / total) * 100)));
+    },
+
     get metrics() {
       const { summary } = this.calls;
       return [
-        { label: "调用量", icon: "activity", value: fmtNumber(summary.total), meta: `成功 ${fmtNumber(summary.success)} · 失败 ${fmtNumber(summary.failed)}` },
-        { label: "成功率", icon: "circle-check", value: this.rate(summary.success_rate), meta: `已完成 ${fmtNumber(summary.success + summary.failed)}` },
-        { label: "进行中", icon: "loader-circle", value: fmtNumber(summary.running), meta: "尚未完成的调用" },
-        { label: "平均耗时", icon: "clock-3", value: summary.average_duration_ms === null ? "—" : `${(summary.average_duration_ms / 1000).toFixed(1)} s`, meta: "已完成调用" },
+        { label: "调用量", icon: "activity", tone: "tone-brand", value: fmtNumber(summary.total), meta: `成功 ${fmtNumber(summary.success)} · 失败 ${fmtNumber(summary.failed)}` },
+        { label: "成功率", icon: "circle-check", tone: "tone-success", value: this.rate(summary.success_rate), meta: `已完成 ${fmtNumber(summary.success + summary.failed)}` },
+        { label: "进行中", icon: "loader-circle", tone: "tone-warning", value: fmtNumber(summary.running), meta: "尚未完成的调用" },
+        { label: "平均耗时", icon: "clock-3", tone: "tone-violet", value: summary.average_duration_ms === null ? "—" : `${(summary.average_duration_ms / 1000).toFixed(1)} s`, meta: "已完成调用" },
       ];
     },
 
@@ -596,8 +612,9 @@ Alpine.data("chat", () => {
 
     init() {
       api("/v1/models").then((result) => {
+        const ids = [...new Set(result.data.map((item) => item.id))];
         this.models = [...new Set(["auto", ...result.data.filter((item) => item.type !== "image").map((item) => item.id)])];
-        this.imageModels = result.data.filter((item) => item.type === "image").sort((a, b) => Number(b.default) - Number(a.default)).map((item) => item.id);
+        this.imageModels = result.data.filter((item) => item.type === "image").map((item) => item.id);
       }).catch((error) => this.error = error.message);
       api("/api/conversations").then((result) => this.list = result).catch((error) => this.error = error.message);
       this.loadQuota();
@@ -1018,13 +1035,14 @@ Alpine.data("accounts", () => {
     query: "",
     type: "",
     status: "",
+    sortBy: "",
+    sortDir: "desc",
     loading: true,
     selected: [],
     busy: "",
     models: { open: false, loading: false, items: [] },
     detail: null,
     detailTab: "info",
-    probe: { busy: false, result: null, error: "" },
     edit: { open: false, account: null, status: "", proxy: "", saving: false, testing: false },
     imp: { open: false, method: "menu", tokens: "", session: "", codex: "", email: "", oauth: null, callback: "", starting: false, submitting: false },
 
@@ -1057,6 +1075,11 @@ Alpine.data("accounts", () => {
       try {
         const [summary, data] = await Promise.all([api("/api/accounts/summary"), api(`/api/accounts?${params}`)]);
         Object.assign(this, { summary, items: data.items, types: data.types, total: data.total, selected: [] });
+        Alpine.store("app").poolSummary = summary;
+        if (this.detail) {
+          const updated = data.items.find((item) => item.access_token === this.detail.access_token);
+          if (updated) this.detail = updated;
+        }
       } catch (error) {
         toast(error.message);
       } finally {
@@ -1069,13 +1092,135 @@ Alpine.data("accounts", () => {
       this.loadAccounts();
     },
 
+    toggleStatusFilter(target) {
+      if (target === "") {
+        this.status = "";
+        return;
+      }
+      this.status = this.status === target ? "" : target;
+    },
+
+    toggleSort(field) {
+      if (this.sortBy === field) {
+        if (this.sortDir === "desc") {
+          this.sortDir = "asc";
+        } else {
+          this.sortBy = "";
+          this.sortDir = "desc";
+        }
+        return;
+      }
+      this.sortBy = field;
+      this.sortDir = "desc";
+    },
+
+    sortIndicator(field) {
+      if (this.sortBy !== field) return "";
+      return this.sortDir === "desc" ? "↓" : "↑";
+    },
+
+    get sortedItems() {
+      if (!this.sortBy) return this.items;
+      const dir = this.sortDir === "desc" ? -1 : 1;
+      return [...this.items].sort((a, b) => {
+        if (this.sortBy === "remaining") return (Math.max(0, a.remaining || 0) - Math.max(0, b.remaining || 0)) * dir;
+        if (this.sortBy === "success") return (this.successRatePercent(a) - this.successRatePercent(b)) * dir || ((a.success || 0) - (b.success || 0)) * dir;
+        if (this.sortBy === "created_at") return (dayjs(a.created_at).valueOf() - dayjs(b.created_at).valueOf()) * dir;
+        return 0;
+      });
+    },
+
+    openDetail(item) {
+      this.detail = item;
+      this.detailTab = "info";
+    },
+
+    closeDetail() {
+      this.detail = null;
+    },
+
+    avatarTone(seed) {
+      const str = String(seed || "");
+      let hash = 0;
+      for (let index = 0; index < str.length; index++) hash = (hash * 31 + str.charCodeAt(index)) % 5;
+      return `t${Math.abs(hash)}`;
+    },
+
+    statusDotClass(status) {
+      return { 正常: "s-ok", 限流: "s-warn", 异常: "s-err" }[status] || "";
+    },
+
+    quotaPercent(item) {
+      const remaining = Math.max(0, Number(item.remaining) || 0);
+      const total = Math.max(Number(item.quota) || 0, remaining);
+      if (total <= 0) return 0;
+      return Math.min(100, Math.max(0, Math.round((remaining / total) * 100)));
+    },
+
+    quotaColor(item) {
+      const pct = this.quotaPercent(item);
+      if (pct > 40) return "var(--color-success)";
+      if (pct > 0) return "var(--color-warning)";
+      return "var(--color-border-strong)";
+    },
+
+    successRatePercent(item) {
+      const ok = Number(item.success) || 0;
+      const fail = Number(item.fail) || 0;
+      const sum = ok + fail;
+      return sum > 0 ? Math.round((ok / sum) * 100) : 100;
+    },
+
+    successRateText(item) {
+      const ok = Number(item.success) || 0;
+      const fail = Number(item.fail) || 0;
+      const sum = ok + fail;
+      return sum > 0 ? `${Math.round((ok / sum) * 100)}%` : "—";
+    },
+
     get metrics() {
       const { total, active, limited, abnormal, disabled, quota, inflight } = this.summary;
+      const healthyRate = total > 0 ? Math.round((active / total) * 100) : 0;
       return [
-        { label: "账号总数", icon: "users-round", value: total, meta: `禁用 ${disabled}` },
-        { label: "正常账号", icon: "circle-check", value: active, meta: `限流 ${limited} · 异常 ${abnormal}` },
-        { label: "剩余额度", icon: "coins", value: quota, meta: "全部账号合计" },
-        { label: "进行中", icon: "activity", value: inflight, meta: "正在生成的图片" },
+        {
+          label: "账号总数",
+          icon: "users-round",
+          tone: "tone-brand",
+          stroke: "var(--color-brand)",
+          spark: "2,18 14,15 26,16 38,11 50,9 66,5",
+          filter: "",
+          value: total,
+          meta: `禁用 ${disabled} · 点击查看全部`,
+        },
+        {
+          label: "正常可用",
+          icon: "circle-check",
+          tone: "tone-success",
+          stroke: "var(--color-success)",
+          spark: "2,16 14,14 26,11 38,12 50,7 66,6",
+          filter: "正常",
+          value: active,
+          meta: `健康占比 ${healthyRate}%`,
+        },
+        {
+          label: "限流 / 异常",
+          icon: "triangle-alert",
+          tone: "tone-warning",
+          stroke: "var(--color-warning)",
+          spark: "2,14 14,17 26,12 38,15 50,11 66,13",
+          filter: abnormal > 0 ? "异常" : "限流",
+          value: limited + abnormal,
+          meta: `限流 ${limited} · 异常 ${abnormal}`,
+        },
+        {
+          label: "剩余生图额度",
+          icon: "zap",
+          tone: "tone-violet",
+          stroke: "var(--chart-4)",
+          spark: "2,6 14,9 26,8 38,13 50,12 66,15",
+          value: quota,
+          meta: `进行中 ${inflight} · 全部账号合计`,
+        },
       ];
     },
 
@@ -1132,25 +1277,6 @@ Alpine.data("accounts", () => {
         toast(error.message);
       } finally {
         this.busy = "";
-      }
-    },
-
-    async probeImage(route) {
-      const account = this.detail;
-      if (!account || this.probe.busy) return;
-      if (!await confirmDialog({ title: "检测账号生图", text: "会用这个账号生成一张测试图并消耗一次额度。", ok: "开始检测" })) return;
-      const run = Symbol();
-      this.probe = { busy: true, result: null, error: "", run };
-      try {
-        const result = await api("/api/accounts/image-probe", { method: "POST", body: { access_token: account.access_token, route } });
-        if (this.probe.run === run) {
-          this.probe.result = result;
-        }
-        await this.loadAccounts();
-      } catch (error) {
-        if (this.probe.run === run) this.probe.error = error.message;
-      } finally {
-        if (this.probe.run === run) this.probe.busy = false;
       }
     },
 
@@ -1469,18 +1595,13 @@ Alpine.data("keys", () => ({
   },
 
   openForm(item) {
-    const policy = item?.policy;
-    const expiry = policy?.expires_at ? new Date(policy.expires_at) : null;
-    const localExpiry = expiry ? new Date(expiry.getTime() - expiry.getTimezoneOffset() * 60000).toISOString().slice(0, 19) : "";
-    this.form = { open: true, id: item?.id ?? "", name: item?.name ?? "", key: item?.key ?? "", plan: item?.plan ?? ["free"], route: item?.route ?? ["web"], models: policy?.allowed_models?.join(", ") ?? "", rpm: policy?.rate_limit_rpm ?? 0, expires: localExpiry, error: "", saving: false };
+    this.form = { open: true, id: item?.id ?? "", name: item?.name ?? "", key: item?.key ?? "", plan: item?.plan ?? ["free"], route: item?.route ?? ["web"], error: "", saving: false };
   },
 
   async save() {
     this.form.saving = true;
     try {
-      const policy = { allowed_models: this.form.models.split(",").map((value) => value.trim()).filter(Boolean), rate_limit_rpm: Number(this.form.rpm), expires_at: this.form.expires ? new Date(this.form.expires).toISOString() : null };
-      const body = { name: this.form.name, plan: this.form.plan, route: this.form.route, policy };
-      if (this.form.key || !this.form.id) body.key = this.form.key;
+      const body = { name: this.form.name, key: this.form.key, plan: this.form.plan, route: this.form.route };
       this.items = (await api(this.form.id ? `/api/auth/users/${this.form.id}` : "/api/auth/users", { method: "POST", body })).items;
       this.form.open = false;
     } catch (error) {
@@ -1970,18 +2091,32 @@ const routes = {
 };
 
 const adminNav = [
-  { group: "创作" },
+  { group: "核心" },
   { path: "/chat", label: "创作台", icon: "message-circle" },
-  { group: "管理" },
-  { path: "/overview", label: "概览", icon: "layout-dashboard" },
-  { path: "/accounts", label: "号池", icon: "users-round" },
-  { path: "/keys", label: "密钥", icon: "key-round" },
-  { path: "/gallery", label: "图库", icon: "images" },
-  { path: "/logs", label: "日志", icon: "scroll-text" },
-  { path: "/settings", label: "设置", icon: "settings-2" },
-  { group: "文档" },
-  { path: "/docs", label: "API", icon: "book-open" },
+  { path: "/overview", label: "运行概览", icon: "layout-dashboard" },
+  { group: "资源管理" },
+  { path: "/accounts", label: "号池管理", icon: "users-round" },
+  { path: "/keys", label: "访问密钥", icon: "key-round" },
+  { path: "/gallery", label: "图片图库", icon: "images" },
+  { path: "/logs", label: "调用日志", icon: "scroll-text" },
+  { group: "系统" },
+  { path: "/settings", label: "系统设置", icon: "settings-2" },
+  { path: "/docs", label: "API 文档", icon: "book-open" },
 ];
+
+const THEME_KEY = "chatgpt2api.theme";
+function readInitialTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved === "light" || saved === "dark") return saved;
+  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "dark" ? "#0b0d12" : "#f4f5f7");
+}
+const initialTheme = readInitialTheme();
+applyTheme(initialTheme);
 
 const homeOf = (role) => role === ADMIN ? "/overview" : "/chat";
 
@@ -2002,6 +2137,8 @@ Alpine.store("app", {
   path: "",
   bare: true,
   navOpen: false,
+  theme: initialTheme,
+  poolSummary: null,
   version: "",
   latest: "",
   releases: [],
@@ -2015,6 +2152,34 @@ Alpine.store("app", {
   },
   get navItems() {
     return adminNav;
+  },
+  get poolHealthRate() {
+    const s = this.poolSummary;
+    if (!s || !s.total) return "—";
+    return `${((s.active / s.total) * 100).toFixed(1)}%`;
+  },
+  get poolSegments() {
+    const s = this.poolSummary;
+    if (!s || !s.total) return { ok: 0, warn: 0, err: 0 };
+    return {
+      ok: Math.round((s.active / s.total) * 100),
+      warn: Math.round((s.limited / s.total) * 100),
+      err: Math.round(((s.abnormal + s.disabled) / s.total) * 100),
+    };
+  },
+  toggleTheme() {
+    this.theme = this.theme === "dark" ? "light" : "dark";
+    localStorage.setItem(THEME_KEY, this.theme);
+    applyTheme(this.theme);
+    window.dispatchEvent(new Event("themechange"));
+  },
+  async refreshPoolSummary() {
+    if (!this.admin) return;
+    try {
+      this.poolSummary = await api("/api/accounts/summary");
+    } catch {
+      // 侧栏健康卡为辅助状态，静默忽略后台刷新失败
+    }
   },
   get hasUpdate() {
     const [latest, current] = [this.latest, this.version].map((value) => value.split(".").map(Number));
@@ -2032,6 +2197,7 @@ Alpine.store("app", {
   logout() {
     session.clear();
     this.session = null;
+    this.poolSummary = null;
     navigate("/login");
   },
 });
@@ -2091,4 +2257,5 @@ window.Alpine = Alpine;
 Alpine.start();
 fetch("/version").then((response) => response.json()).then((data) => Alpine.store("app").version = data.version);
 navigate(location.pathname, true);
+Alpine.store("app").refreshPoolSummary();
 

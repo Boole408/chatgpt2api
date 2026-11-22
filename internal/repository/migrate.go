@@ -25,10 +25,10 @@ func (r *Repository) InsertLegacySnapshot(ctx context.Context, accounts []Accoun
 				return errors.New("无法检查目标库的 API 密钥")
 			}
 			for _, key := range existing {
-				if IsLegacyKey(key.Key) {
+				if IsHashedAPIKey(key.Key) {
 					continue
 				}
-				if legacyKeyValue(key.Key) == keys[index].Key {
+				if HashAPIKey(key.Key) == keys[index].Key {
 					return fmt.Errorf("用户密钥 %d 已存在于目标库", index+1)
 				}
 			}

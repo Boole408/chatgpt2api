@@ -1570,7 +1570,9 @@ Alpine.data("keys", () => ({
   query: "",
   page: 1,
   size: 20,
-  form: { open: false, id: "", name: "", key: "", plan: "free", route: "web", error: "", saving: false },
+  form: { open: false, id: "", name: "", key: "", plan: ["free"], route: ["web"], error: "", saving: false },
+  revealedKey: "",
+  keyCopied: false,
 
   async init() {
     await this.load();
@@ -1595,20 +1597,41 @@ Alpine.data("keys", () => ({
   },
 
   openForm(item) {
-    this.form = { open: true, id: item?.id ?? "", name: item?.name ?? "", key: item?.key ?? "", plan: item?.plan ?? ["free"], route: item?.route ?? ["web"], error: "", saving: false };
+    this.form = { open: true, id: item?.id ?? "", name: item?.name ?? "", key: "", plan: item?.plan ?? ["free"], route: item?.route ?? ["web"], error: "", saving: false };
   },
 
   async save() {
+    if (this.form.saving) return;
     this.form.saving = true;
+    this.form.error = "";
     try {
-      const body = { name: this.form.name, key: this.form.key, plan: this.form.plan, route: this.form.route };
-      this.items = (await api(this.form.id ? `/api/auth/users/${this.form.id}` : "/api/auth/users", { method: "POST", body })).items;
+      const body = { name: this.form.name, plan: this.form.plan, route: this.form.route };
+      if (this.form.key.trim()) body.key = this.form.key;
+      const data = await api(this.form.id ? `/api/auth/users/${this.form.id}` : "/api/auth/users", { method: "POST", body });
+      this.items = data.items;
       this.form.open = false;
+      this.revealedKey = data.key ?? "";
     } catch (error) {
       this.form.error = error.message;
     } finally {
       this.form.saving = false;
     }
+  },
+
+  async copyRevealedKey() {
+    const key = this.revealedKey;
+    if (!key) return;
+    try {
+      await writeClipboard(key);
+      if (this.revealedKey === key) this.keyCopied = true;
+    } catch (error) {
+      toast(error.message);
+    }
+  },
+
+  clearRevealedKey() {
+    this.revealedKey = "";
+    this.keyCopied = false;
   },
 
   async toggle(item, enabled) {

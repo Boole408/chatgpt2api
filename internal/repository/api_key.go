@@ -11,16 +11,16 @@ import (
 	"gorm.io/gorm"
 )
 
-const legacyKeyPrefix = "sha256:"
+const hashedKeyPrefix = "sha256:"
 
-func legacyKeyValue(key string) string {
+func HashAPIKey(key string) string {
 	digest := sha256.Sum256([]byte(key))
-	return legacyKeyPrefix + hex.EncodeToString(digest[:])
+	return LegacyKeyFromHash(digest[:])
 }
 
-func IsLegacyKey(value string) bool { return strings.HasPrefix(value, legacyKeyPrefix) }
+func IsHashedAPIKey(value string) bool { return strings.HasPrefix(value, hashedKeyPrefix) }
 
-func LegacyKeyFromHash(digest []byte) string { return legacyKeyPrefix + hex.EncodeToString(digest) }
+func LegacyKeyFromHash(digest []byte) string { return hashedKeyPrefix + hex.EncodeToString(digest) }
 
 type APIKey struct {
 	ID            string    `gorm:"type:varchar(32);primaryKey"`
@@ -41,10 +41,10 @@ func (APIKey) TableName() string { return "api_keys" }
 
 func (r *Repository) APIKeyByValue(ctx context.Context, key string) (APIKey, error) {
 	var item APIKey
-	if IsLegacyKey(key) {
+	if IsHashedAPIKey(key) {
 		return item, ErrNotFound
 	}
-	if err := r.db.WithContext(ctx).Where("key IN ? AND enabled = ?", []string{key, legacyKeyValue(key)}, true).First(&item).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("key IN ? AND enabled = ?", []string{key, HashAPIKey(key)}, true).First(&item).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return APIKey{}, ErrNotFound
 		}
@@ -75,7 +75,7 @@ func (r *Repository) APIKeyByID(ctx context.Context, id string) (APIKey, error) 
 }
 
 func (r *Repository) APIKeyExists(ctx context.Context, key string, excludeID string) (bool, error) {
-	db := r.db.WithContext(ctx).Model(&APIKey{}).Where("key IN ?", []string{key, legacyKeyValue(key)})
+	db := r.db.WithContext(ctx).Model(&APIKey{}).Where("key IN ?", []string{key, HashAPIKey(key)})
 	if excludeID != "" {
 		db = db.Where("id <> ?", excludeID)
 	}

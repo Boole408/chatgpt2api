@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"path"
 	"slices"
@@ -189,29 +191,44 @@ func keyPlans(plan []string) string {
 	return strings.Join(plan, ",")
 }
 
-func (s *AuthService) Create(ctx context.Context, name string, key string, plan []string, route []string, policy *KeyPolicy) (repository.APIKey, error) {
-	if key == "" || repository.IsLegacyKey(key) {
-		return repository.APIKey{}, errors.New("请输入新的专用密钥")
+func (s *AuthService) Create(ctx context.Context, name string, key string, plan []string, route []string, policy *KeyPolicy) (repository.APIKey, string, error) {
+	generated := ""
+	if strings.TrimSpace(key) == "" {
+		var secret [32]byte
+		if _, err := rand.Read(secret[:]); err != nil {
+			return repository.APIKey{}, "", errors.New("无法生成密钥，请重试")
+		}
+		key = "sk-" + base64.RawURLEncoding.EncodeToString(secret[:])
+		generated = key
+	}
+	if repository.IsHashedAPIKey(key) {
+		return repository.APIKey{}, "", errors.New("请输入新的专用密钥")
 	}
 	if key == s.adminKey {
-		return repository.APIKey{}, errors.New("这个密钥和管理员密钥冲突了，请换一个新的密钥")
+		return repository.APIKey{}, "", errors.New("这个密钥和管理员密钥冲突了，请换一个新的密钥")
 	}
 	exists, err := s.repo.APIKeyExists(ctx, key, "")
 	if err != nil {
-		return repository.APIKey{}, err
+		return repository.APIKey{}, "", err
 	}
 	if exists {
-		return repository.APIKey{}, errors.New("这个专用密钥已经存在，请换一个新的密钥")
+		return repository.APIKey{}, "", errors.New("这个专用密钥已经存在，请换一个新的密钥")
 	}
 	name, err = s.availableName(ctx, name, "")
 	if err != nil {
-		return repository.APIKey{}, err
+		return repository.APIKey{}, "", err
+	}
+	if generated != "" {
+		key = repository.HashAPIKey(generated)
 	}
 	item := repository.APIKey{ID: strings.ReplaceAll(uuid.NewString(), "-", ""), Name: name, Role: "user", Key: key, Plan: keyPlans(plan), Route: strings.Join(route, ","), Enabled: true, CreatedAt: time.Now().UTC()}
 	if err := policy.Apply(&item); err != nil {
-		return repository.APIKey{}, err
+		return repository.APIKey{}, "", err
 	}
-	return item, s.repo.SaveAPIKey(ctx, item)
+	if err := s.repo.SaveAPIKey(ctx, item); err != nil {
+		return repository.APIKey{}, "", err
+	}
+	return item, generated, nil
 }
 
 func (s *AuthService) Update(ctx context.Context, id string, name *string, enabled *bool, key *string, plan []string, route []string, policy *KeyPolicy) (repository.APIKey, error) {
@@ -228,8 +245,8 @@ func (s *AuthService) Update(ctx context.Context, id string, name *string, enabl
 			return repository.APIKey{}, err
 		}
 	}
-	if key != nil {
-		if *key == "" || *key == s.adminKey || repository.IsLegacyKey(*key) {
+	if key != nil && strings.TrimSpace(*key) != "" {
+		if *key == s.adminKey || repository.IsHashedAPIKey(*key) {
 			return repository.APIKey{}, errors.New("请输入与管理员密钥不同的新密钥")
 		}
 		exists, err := s.repo.APIKeyExists(ctx, *key, id)
@@ -239,7 +256,9 @@ func (s *AuthService) Update(ctx context.Context, id string, name *string, enabl
 		if exists {
 			return repository.APIKey{}, errors.New("这个专用密钥已经存在，请换一个新的密钥")
 		}
-		item.Key = *key
+		if item.Key != repository.HashAPIKey(*key) {
+			item.Key = *key
+		}
 	}
 	if enabled != nil {
 		item.Enabled = *enabled

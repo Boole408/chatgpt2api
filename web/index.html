@@ -1219,8 +1219,11 @@
               <template x-for="item in paged" :key="item.id">
                 <tr>
                   <td class="text-strong" x-text="item.name || '—'"></td>
-                  <td><span class="mono copyable" title="点击复制" x-text="item.key" @click="$copy(item.key)"></span></td>
-                  <td x-text="item.plan.map((value) => ({ free: 'Free', plus: 'Plus', team: 'Team', pro: 'Pro' })[value]).join('、')"></td>
+                  <td>
+                    <span class="mono copyable" x-show="item.key" title="点击复制" x-text="item.key" @click="$copy(item.key)"></span>
+                    <span class="text-muted" x-show="!item.key">不可查看</span>
+                  </td>
+                  <td x-text="item.plan.map((value) => ({ '*': '不限', free: 'Free', plus: 'Plus', team: 'Team', pro: 'Pro' })[value]).join('、')"></td>
                   <td x-text="item.route.map((value) => ({ web: 'Web', codex: 'Codex' })[value]).join('、')"></td>
                   <td><input type="checkbox" class="toggle toggle-sm" :checked="item.enabled" :aria-label="item.enabled ? '禁用' : '启用'" @change="toggle(item, $event.target.checked)"></td>
                   <td class="num text-muted nowrap" x-text="$time(item.created_at)"></td>
@@ -1239,7 +1242,7 @@
         <ui-pager x-show="filtered.length > size" :page="page" :size="size" :total="filtered.length" @change="page = $event.detail.page; size = $event.detail.size"></ui-pager>
       </section>
 
-      <dialog class="modal" x-effect="form.open ? $el.showModal() : $el.close()" @close="form.open = false">
+      <dialog class="modal" x-effect="form.open ? $el.showModal() : $el.close()" @cancel="form.saving && $event.preventDefault()" @close="form.open = false; form.key = ''">
         <form class="modal-box vstack" @submit.prevent="save()">
           <h3 class="modal-title" x-text="form.id ? '编辑密钥' : '新增密钥'"></h3>
           <div class="field">
@@ -1248,23 +1251,37 @@
           </div>
           <div class="field">
             <label class="field-label" for="key-value">密钥</label>
-            <input id="key-value" class="input input-sm mono" :class="{ 'input-error': form.error }" x-model="form.key" placeholder="登录与调用时使用" @input="form.error = ''">
+            <input id="key-value" class="input input-sm mono" :class="{ 'input-error': form.error }" x-model="form.key" :placeholder="form.id ? '留空保留当前密钥' : '留空自动生成'" autocomplete="off" @input="form.error = ''">
             <span class="field-error" x-show="form.error" x-text="form.error"></span>
           </div>
           <div class="field">
             <span class="field-label">订阅等级</span>
-            <ui-select class="block" multiple aria-label="订阅等级" x-model="form.plan"><option value="free">Free</option><option value="plus">Plus</option><option value="team">Team</option><option value="pro">Pro</option></ui-select>
+            <ui-select class="block" multiple aria-label="订阅等级" x-model="form.plan"><option value="*">不限</option><option value="free">Free</option><option value="plus">Plus</option><option value="team">Team</option><option value="pro">Pro</option></ui-select>
           </div>
           <div class="field">
             <span class="field-label">线路</span>
             <ui-select class="block" multiple aria-label="线路" x-model="form.route"><option value="web">Web</option><option value="codex">Codex</option></ui-select>
           </div>
           <div class="modal-action">
-            <button type="button" class="btn btn-sm" @click="form.open = false">取消</button>
-            <button type="submit" class="btn btn-sm btn-primary" :disabled="!form.key || form.saving"><span class="loading loading-spinner loading-xs" x-show="form.saving"></span>保存</button>
+            <button type="button" class="btn btn-sm" :disabled="form.saving" @click="form.open = false">取消</button>
+            <button type="submit" class="btn btn-sm btn-primary" :disabled="form.saving"><span class="loading loading-spinner loading-xs" x-show="form.saving"></span>保存</button>
           </div>
         </form>
-        <form method="dialog" class="modal-backdrop"><button>关闭</button></form>
+        <form method="dialog" class="modal-backdrop"><button :disabled="form.saving">关闭</button></form>
+      </dialog>
+
+      <dialog class="modal" aria-labelledby="created-key-title" x-effect="revealedKey ? $el.showModal() : $el.close()" @close="clearRevealedKey()">
+        <div class="modal-box vstack">
+          <h3 class="modal-title" id="created-key-title">密钥已生成</h3>
+          <label class="field">
+            <span class="field-label">仅显示一次，请在关闭前复制</span>
+            <input class="input input-sm mono" type="text" :value="revealedKey" readonly @focus="$el.select()">
+          </label>
+          <div class="modal-action">
+            <button type="button" class="btn btn-sm" @click="clearRevealedKey()">关闭</button>
+            <button type="button" class="btn btn-sm btn-primary" @click="copyRevealedKey()" x-text="keyCopied ? '已复制' : '复制密钥'"></button>
+          </div>
+        </div>
       </dialog>
     </div>
   </template>

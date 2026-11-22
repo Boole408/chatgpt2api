@@ -23,10 +23,14 @@ func NewAuthHandler(service *service.AuthService, version string) *AuthHandler {
 func (h *AuthHandler) RegisterLogin(router *gin.Engine) { router.POST("/auth/login", h.login) }
 
 func (h *AuthHandler) RegisterRoutes(router *gin.RouterGroup) {
-	router.GET("/auth/users", h.list)
-	router.POST("/auth/users", h.create)
-	router.POST("/auth/users/:keyID", h.update)
-	router.DELETE("/auth/users/:keyID", h.delete)
+	keys := router.Group("/auth/users", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Next()
+	})
+	keys.GET("", h.list)
+	keys.POST("", h.create)
+	keys.POST("/:keyID", h.update)
+	keys.DELETE("/:keyID", h.delete)
 }
 
 func (h *AuthHandler) login(c *gin.Context) {
@@ -46,16 +50,26 @@ func (h *AuthHandler) list(c *gin.Context) {
 func (h *AuthHandler) create(c *gin.Context) {
 	var body CreateAPIKeyRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
-		writeError(c, http.StatusBadRequest, errors.New("请输入新的专用密钥"))
+		writeError(c, http.StatusBadRequest, errors.New("请选择有效的订阅等级和线路"))
 		return
 	}
-	item, err := h.service.Create(c.Request.Context(), body.Name, body.Key, body.Plan, body.Route, body.Policy)
+	// Read the list before writing so a later read error cannot strand a
+	// newly generated secret that has never been sent to the administrator.
+	items, err := h.service.List(c.Request.Context())
+	if err != nil {
+		writeResult(c, nil, err)
+		return
+	}
+	item, generated, err := h.service.Create(c.Request.Context(), body.Name, body.Key, body.Plan, body.Route, body.Policy)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, err)
 		return
 	}
-	items, err := h.service.List(c.Request.Context())
-	writeResult(c, gin.H{"item": toAPIKeyResponse(item), "items": toAPIKeyResponses(items)}, err)
+	result := gin.H{"item": toAPIKeyResponse(item), "items": toAPIKeyResponses(append(items, item))}
+	if generated != "" {
+		result["key"] = generated
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func (h *AuthHandler) update(c *gin.Context) {
@@ -92,7 +106,7 @@ func (h *AuthHandler) delete(c *gin.Context) {
 
 func toAPIKeyResponse(item repository.APIKey) APIKeyResponse {
 	key := item.Key
-	if repository.IsLegacyKey(key) {
+	if repository.IsHashedAPIKey(key) {
 		key = ""
 	}
 	models := []string{}
@@ -124,7 +138,7 @@ type APIKeyResponse struct {
 }
 type CreateAPIKeyRequest struct {
 	Name   string             `json:"name"`
-	Key    string             `json:"key" binding:"required"`
+	Key    string             `json:"key"`
 	Plan   []string           `json:"plan" binding:"required,min=1,dive,oneof=* free plus team pro"`
 	Route  []string           `json:"route" binding:"required,min=1,dive,oneof=web codex"`
 	Policy *service.KeyPolicy `json:"policy"`

@@ -29,6 +29,7 @@ func (h *AuthHandler) RegisterRoutes(router *gin.RouterGroup) {
 	})
 	keys.GET("", h.list)
 	keys.POST("", h.create)
+	keys.GET("/:keyID/secret", h.reveal)
 	keys.POST("/:keyID", h.update)
 	keys.DELETE("/:keyID", h.delete)
 }
@@ -45,6 +46,18 @@ func (h *AuthHandler) login(c *gin.Context) {
 func (h *AuthHandler) list(c *gin.Context) {
 	items, err := h.service.List(c.Request.Context())
 	writeResult(c, gin.H{"items": toAPIKeyResponses(items)}, err)
+}
+
+func (h *AuthHandler) reveal(c *gin.Context) {
+	key, err := h.service.Reveal(c.Request.Context(), c.Param("keyID"))
+	switch {
+	case errors.Is(err, repository.ErrNotFound):
+		writeError(c, http.StatusNotFound, errors.New("这条用户密钥不存在"))
+	case errors.Is(err, service.ErrKeyNotRecoverable):
+		writeError(c, http.StatusConflict, err)
+	default:
+		writeResult(c, gin.H{"key": key}, err)
+	}
 }
 
 func (h *AuthHandler) create(c *gin.Context) {
@@ -105,15 +118,11 @@ func (h *AuthHandler) delete(c *gin.Context) {
 }
 
 func toAPIKeyResponse(item repository.APIKey) APIKeyResponse {
-	key := item.Key
-	if repository.IsHashedAPIKey(key) {
-		key = ""
-	}
 	models := []string{}
 	if item.AllowedModels != "" {
 		models = strings.Split(item.AllowedModels, ",")
 	}
-	return APIKeyResponse{ID: item.ID, Name: item.Name, Role: item.Role, Key: key, Plan: strings.Split(item.Plan, ","), Route: strings.Split(item.Route, ","), Enabled: item.Enabled, CreatedAt: item.CreatedAt, LastUsedAt: item.LastUsedAt, Policy: service.KeyPolicy{AllowedModels: models, RateLimitRPM: item.RateLimitRPM, ExpiresAt: item.ExpiresAt}}
+	return APIKeyResponse{ID: item.ID, Name: item.Name, Role: item.Role, CanReveal: item.CanReveal(), Plan: strings.Split(item.Plan, ","), Route: strings.Split(item.Route, ","), Enabled: item.Enabled, CreatedAt: item.CreatedAt, LastUsedAt: item.LastUsedAt, Policy: service.KeyPolicy{AllowedModels: models, RateLimitRPM: item.RateLimitRPM, ExpiresAt: item.ExpiresAt}}
 }
 
 func toAPIKeyResponses(items []repository.APIKey) []APIKeyResponse {
@@ -128,7 +137,7 @@ type APIKeyResponse struct {
 	ID         string            `json:"id"`
 	Name       string            `json:"name"`
 	Role       string            `json:"role"`
-	Key        string            `json:"key"`
+	CanReveal  bool              `json:"can_reveal"`
 	Plan       []string          `json:"plan"`
 	Route      []string          `json:"route"`
 	Enabled    bool              `json:"enabled"`

@@ -51,7 +51,10 @@ func main() {
 	catalogService := service.NewCatalogService(accountService, proxyService, cfg)
 	aiService := service.NewAIService(accountService, catalogService, imageService, logService, proxyService, cfg)
 	audioService := service.NewAudioService(accountService, logService, proxyService, cfg)
-	authService := service.NewAuthService(repo, cfg.APIKey)
+	authService, err := service.NewAuthService(repo, cfg.APIKey, cfg.DataDir)
+	if err != nil {
+		log.Fatal(err)
+	}
 	taskService := service.NewTaskService(repo, aiService, cfg)
 	authHandler := handler.NewAuthHandler(authService, cfg.Version)
 	systemHandler := handler.NewSystemHandler(cfg, proxyService)

@@ -60,7 +60,10 @@ func TestMigratedKeyKeepsAuthorizationRules(t *testing.T) {
 	if err != nil || item.Type != "plus" || !item.IsCodex || item.Status != "禁用" || item.Quota != 4 || item.RefreshToken != "fixture-refresh" {
 		t.Fatalf("account migration unsuccessful: %v", err)
 	}
-	auth := service.NewAuthService(repo, "fixture-admin")
+	auth, err := service.NewAuthService(repo, "fixture-admin", temp)
+	if err != nil {
+		t.Fatal(err)
+	}
 	engine := gin.New()
 	handler := NewAuthHandler(auth, "test")
 	handler.RegisterLogin(engine)

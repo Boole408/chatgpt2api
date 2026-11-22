@@ -8,6 +8,8 @@ docker compose up -d --build
 
 面板默认在 `http://localhost:3000`，API 前缀为 `/v1`。编排只启动一个 Go 应用，界面由同一个进程提供。默认把 `./data-go` 挂载到容器的 `/app/data`；备份 `config.yaml` 和该目录。设置 `CHATGPT2API_HOST_PORT` 可换端口，设置 `CHATGPT2API_DATA_DIR` 可换宿主数据目录。
 
+访问密钥的可复制副本会加密存储。备份或迁移数据库时，请同时保留数据目录中的 `access-keys.aes`；使用外部数据库时也需要备份此文件。
+
 已有本仓库发布的 Go 镜像时，可以把 `CHATGPT2API_IMAGE` 设为完整镜像引用，再执行：
 
 ```sh

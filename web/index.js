@@ -1571,8 +1571,9 @@ Alpine.data("keys", () => ({
   page: 1,
   size: 20,
   form: { open: false, id: "", name: "", key: "", plan: ["free"], route: ["web"], error: "", saving: false },
-  revealedKey: "",
-  keyCopied: false,
+  revealed: { id: "", key: "" },
+  readingKey: false,
+  keyReadVersion: 0,
 
   async init() {
     await this.load();
@@ -1589,7 +1590,7 @@ Alpine.data("keys", () => ({
   },
 
   get filtered() {
-    return this.items.filter((item) => item.name.includes(this.query) || item.key.includes(this.query));
+    return this.items.filter((item) => item.name.includes(this.query));
   },
 
   get paged() {
@@ -1597,7 +1598,8 @@ Alpine.data("keys", () => ({
   },
 
   openForm(item) {
-    this.form = { open: true, id: item?.id ?? "", name: item?.name ?? "", key: "", plan: item?.plan ?? ["free"], route: item?.route ?? ["web"], error: "", saving: false };
+    this.hideKey();
+    this.form = { open: true, id: item?.id ?? "", name: item?.name ?? "", key: "", canReveal: item?.can_reveal ?? true, plan: item?.plan ?? ["free"], route: item?.route ?? ["web"], error: "", saving: false };
   },
 
   async save() {
@@ -1607,10 +1609,8 @@ Alpine.data("keys", () => ({
     try {
       const body = { name: this.form.name, plan: this.form.plan, route: this.form.route };
       if (this.form.key.trim()) body.key = this.form.key;
-      const data = await api(this.form.id ? `/api/auth/users/${this.form.id}` : "/api/auth/users", { method: "POST", body });
-      this.items = data.items;
+      this.items = (await api(this.form.id ? `/api/auth/users/${this.form.id}` : "/api/auth/users", { method: "POST", body })).items;
       this.form.open = false;
-      this.revealedKey = data.key ?? "";
     } catch (error) {
       this.form.error = error.message;
     } finally {
@@ -1618,20 +1618,34 @@ Alpine.data("keys", () => ({
     }
   },
 
-  async copyRevealedKey() {
-    const key = this.revealedKey;
-    if (!key) return;
+  async readKey(item, copyButton) {
+    if (this.readingKey || !item.can_reveal) return;
+    if (!copyButton && this.revealed.id === item.id) {
+      this.hideKey();
+      return;
+    }
+    if (!copyButton) this.hideKey();
+    const version = this.keyReadVersion;
+    this.readingKey = true;
     try {
-      await writeClipboard(key);
-      if (this.revealedKey === key) this.keyCopied = true;
+      const { key } = await api(`/api/auth/users/${item.id}/secret`);
+      if (version !== this.keyReadVersion) return;
+      if (copyButton) await copyText(key, copyButton);
+      else this.revealed = { id: item.id, key };
     } catch (error) {
       toast(error.message);
+    } finally {
+      this.readingKey = false;
     }
   },
 
-  clearRevealedKey() {
-    this.revealedKey = "";
-    this.keyCopied = false;
+  hideKey() {
+    this.keyReadVersion++;
+    this.revealed = { id: "", key: "" };
+  },
+
+  destroy() {
+    this.hideKey();
   },
 
   async toggle(item, enabled) {
@@ -1644,7 +1658,8 @@ Alpine.data("keys", () => ({
   },
 
   async remove(item) {
-    if (!await confirmDialog({ title: "删除密钥", text: `删除「${item.name || item.key}」后，使用它的调用会立即失效。`, ok: "删除" })) return;
+    this.hideKey();
+    if (!await confirmDialog({ title: "删除密钥", text: `删除「${item.name || "未命名密钥"}」后，使用它的调用会立即失效。`, ok: "删除" })) return;
     try {
       this.items = (await api(`/api/auth/users/${item.id}`, { method: "DELETE" })).items;
     } catch (error) {

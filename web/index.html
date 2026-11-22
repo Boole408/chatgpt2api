@@ -1203,7 +1203,7 @@
         <div class="row">
           <label class="input input-sm search-input">
             <ui-icon name="search" class="icon-sm text-subtle"></ui-icon>
-            <input type="search" placeholder="搜索名称或密钥" x-model="query" @input="page = 1">
+            <input type="search" placeholder="搜索密钥名称" x-model="query" @input="page = 1; hideKey()">
           </label>
           <button type="button" class="btn btn-sm btn-primary" @click="openForm()"><ui-icon name="plus" class="icon-sm"></ui-icon>新增密钥</button>
         </div>
@@ -1220,8 +1220,12 @@
                 <tr>
                   <td class="text-strong" x-text="item.name || '—'"></td>
                   <td>
-                    <span class="mono copyable" x-show="item.key" title="点击复制" x-text="item.key" @click="$copy(item.key)"></span>
-                    <span class="text-muted" x-show="!item.key">不可查看</span>
+                    <div class="row row-xs" x-show="item.can_reveal">
+                      <span class="mono break-all" x-text="revealed.id === item.id ? revealed.key : '••••••••'"></span>
+                      <button type="button" class="btn btn-ghost btn-sm btn-square tooltip" :data-tip="revealed.id === item.id ? '隐藏密钥' : '显示密钥'" :aria-label="revealed.id === item.id ? '隐藏密钥' : '显示密钥'" :disabled="readingKey" @click="readKey(item)"><ui-icon :name="revealed.id === item.id ? 'eye-off' : 'eye'" class="icon-sm"></ui-icon></button>
+                      <button type="button" class="btn btn-ghost btn-sm btn-square tooltip" data-tip="复制密钥" aria-label="复制密钥" :disabled="readingKey" @click="readKey(item, $el)"><ui-icon name="copy" class="icon-sm"></ui-icon></button>
+                    </div>
+                    <span class="text-muted" x-show="!item.can_reveal">编辑并填入密钥后可复制</span>
                   </td>
                   <td x-text="item.plan.map((value) => ({ '*': '不限', free: 'Free', plus: 'Plus', team: 'Team', pro: 'Pro' })[value]).join('、')"></td>
                   <td x-text="item.route.map((value) => ({ web: 'Web', codex: 'Codex' })[value]).join('、')"></td>
@@ -1239,7 +1243,7 @@
         </div>
         <div class="center-fill" x-show="loading"><span class="loading loading-spinner loading-sm"></span></div>
         <div class="empty" x-show="!loading && !filtered.length"><ui-icon name="key-round"></ui-icon><span x-text="query ? '没有匹配的密钥' : '暂无用户密钥'"></span></div>
-        <ui-pager x-show="filtered.length > size" :page="page" :size="size" :total="filtered.length" @change="page = $event.detail.page; size = $event.detail.size"></ui-pager>
+        <ui-pager x-show="filtered.length > size" :page="page" :size="size" :total="filtered.length" @change="page = $event.detail.page; size = $event.detail.size; hideKey()"></ui-pager>
       </section>
 
       <dialog class="modal" x-effect="form.open ? $el.showModal() : $el.close()" @cancel="form.saving && $event.preventDefault()" @close="form.open = false; form.key = ''">
@@ -1251,7 +1255,7 @@
           </div>
           <div class="field">
             <label class="field-label" for="key-value">密钥</label>
-            <input id="key-value" class="input input-sm mono" :class="{ 'input-error': form.error }" x-model="form.key" :placeholder="form.id ? '留空保留当前密钥' : '留空自动生成'" autocomplete="off" @input="form.error = ''">
+            <input id="key-value" type="password" class="input input-sm mono" :class="{ 'input-error': form.error }" x-model="form.key" :placeholder="form.id ? (form.canReveal ? '留空保留当前密钥' : '填入原密钥或新的密钥') : '留空自动生成'" autocomplete="new-password" @input="form.error = ''">
             <span class="field-error" x-show="form.error" x-text="form.error"></span>
           </div>
           <div class="field">
@@ -1270,19 +1274,6 @@
         <form method="dialog" class="modal-backdrop"><button :disabled="form.saving">关闭</button></form>
       </dialog>
 
-      <dialog class="modal" aria-labelledby="created-key-title" x-effect="revealedKey ? $el.showModal() : $el.close()" @close="clearRevealedKey()">
-        <div class="modal-box vstack">
-          <h3 class="modal-title" id="created-key-title">密钥已生成</h3>
-          <label class="field">
-            <span class="field-label">仅显示一次，请在关闭前复制</span>
-            <input class="input input-sm mono" type="text" :value="revealedKey" readonly @focus="$el.select()">
-          </label>
-          <div class="modal-action">
-            <button type="button" class="btn btn-sm" @click="clearRevealedKey()">关闭</button>
-            <button type="button" class="btn btn-sm btn-primary" @click="copyRevealedKey()" x-text="keyCopied ? '已复制' : '复制密钥'"></button>
-          </div>
-        </div>
-      </dialog>
     </div>
   </template>
 

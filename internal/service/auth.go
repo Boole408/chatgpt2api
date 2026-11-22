@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -18,6 +19,7 @@ import (
 )
 
 var ErrUnauthorized = errors.New("密钥无效或已失效，请重新登录")
+var ErrKeyNotRecoverable = errors.New("此密钥只保存了哈希，请编辑并填入原密钥或新的密钥")
 
 type Identity struct {
 	ID            string
@@ -32,6 +34,7 @@ type Identity struct {
 type AuthService struct {
 	repo      *repository.Repository
 	adminKey  string
+	vault     cipher.AEAD
 	mu        sync.RWMutex
 	keys      map[string]cachedKey
 	windows   map[string][]time.Time
@@ -43,8 +46,12 @@ type cachedKey struct {
 	expiresAt time.Time
 }
 
-func NewAuthService(repo *repository.Repository, adminKey string) *AuthService {
-	return &AuthService{repo: repo, adminKey: adminKey, keys: map[string]cachedKey{}, windows: map[string][]time.Time{}}
+func NewAuthService(repo *repository.Repository, adminKey, dataDir string) (*AuthService, error) {
+	vault, err := openAccessKeyVault(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	return &AuthService{repo: repo, adminKey: adminKey, vault: vault, keys: map[string]cachedKey{}, windows: map[string][]time.Time{}}, nil
 }
 
 func (s *AuthService) apiKey(ctx context.Context, key string) (repository.APIKey, error) {
@@ -156,6 +163,20 @@ func (s *AuthService) List(ctx context.Context) ([]repository.APIKey, error) {
 	return s.repo.APIKeys(ctx, "user")
 }
 
+func (s *AuthService) Reveal(ctx context.Context, id string) (string, error) {
+	item, err := s.repo.APIKeyByID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if item.Role != "user" {
+		return "", repository.ErrNotFound
+	}
+	if !item.CanReveal() {
+		return "", ErrKeyNotRecoverable
+	}
+	return s.unprotectKey(item)
+}
+
 type KeyPolicy struct {
 	AllowedModels []string   `json:"allowed_models"`
 	RateLimitRPM  int        `json:"rate_limit_rpm"`
@@ -204,6 +225,9 @@ func (s *AuthService) Create(ctx context.Context, name string, key string, plan 
 	if repository.IsHashedAPIKey(key) {
 		return repository.APIKey{}, "", errors.New("请输入新的专用密钥")
 	}
+	if len(key) > 255 {
+		return repository.APIKey{}, "", errors.New("密钥长度不能超过 255 字节")
+	}
 	if key == s.adminKey {
 		return repository.APIKey{}, "", errors.New("这个密钥和管理员密钥冲突了，请换一个新的密钥")
 	}
@@ -218,13 +242,11 @@ func (s *AuthService) Create(ctx context.Context, name string, key string, plan 
 	if err != nil {
 		return repository.APIKey{}, "", err
 	}
-	if generated != "" {
-		key = repository.HashAPIKey(generated)
-	}
-	item := repository.APIKey{ID: strings.ReplaceAll(uuid.NewString(), "-", ""), Name: name, Role: "user", Key: key, Plan: keyPlans(plan), Route: strings.Join(route, ","), Enabled: true, CreatedAt: time.Now().UTC()}
+	item := repository.APIKey{ID: strings.ReplaceAll(uuid.NewString(), "-", ""), Name: name, Role: "user", Plan: keyPlans(plan), Route: strings.Join(route, ","), Enabled: true, CreatedAt: time.Now().UTC()}
 	if err := policy.Apply(&item); err != nil {
 		return repository.APIKey{}, "", err
 	}
+	s.protectKey(&item, key)
 	if err := s.repo.SaveAPIKey(ctx, item); err != nil {
 		return repository.APIKey{}, "", err
 	}
@@ -249,6 +271,9 @@ func (s *AuthService) Update(ctx context.Context, id string, name *string, enabl
 		if *key == s.adminKey || repository.IsHashedAPIKey(*key) {
 			return repository.APIKey{}, errors.New("请输入与管理员密钥不同的新密钥")
 		}
+		if len(*key) > 255 {
+			return repository.APIKey{}, errors.New("密钥长度不能超过 255 字节")
+		}
 		exists, err := s.repo.APIKeyExists(ctx, *key, id)
 		if err != nil {
 			return repository.APIKey{}, err
@@ -256,9 +281,7 @@ func (s *AuthService) Update(ctx context.Context, id string, name *string, enabl
 		if exists {
 			return repository.APIKey{}, errors.New("这个专用密钥已经存在，请换一个新的密钥")
 		}
-		if item.Key != repository.HashAPIKey(*key) {
-			item.Key = *key
-		}
+		s.protectKey(&item, *key)
 	}
 	if enabled != nil {
 		item.Enabled = *enabled

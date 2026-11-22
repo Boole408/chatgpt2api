@@ -27,6 +27,7 @@ type APIKey struct {
 	Name          string    `gorm:"type:varchar(255);not null;uniqueIndex:api_key_role_name"`
 	Role          string    `gorm:"type:varchar(16);not null;uniqueIndex:api_key_role_name"`
 	Key           string    `gorm:"type:varchar(255);not null;uniqueIndex"`
+	EncryptedKey  string    `gorm:"type:text" json:"-"`
 	Plan          string    `gorm:"type:varchar(32);not null;default:free"`
 	Route         string    `gorm:"type:varchar(32);not null;default:web"`
 	Enabled       bool      `gorm:"not null"`
@@ -38,6 +39,10 @@ type APIKey struct {
 }
 
 func (APIKey) TableName() string { return "api_keys" }
+
+func (item APIKey) CanReveal() bool {
+	return !IsHashedAPIKey(item.Key) || item.EncryptedKey != ""
+}
 
 func (r *Repository) APIKeyByValue(ctx context.Context, key string) (APIKey, error) {
 	var item APIKey

@@ -314,6 +314,9 @@ func (s *AIService) renderImage(ctx context.Context, account repository.Account,
 		callLog.Add("请求 Codex 图片生成", map[string]any{"position": index})
 		data, err = chatgpt.NewCodexAPI(account.AccessToken, chatgpt.CodexBaseURL, account.Proxy, s.proxy).WithAccountID(account.AccountID).StartImageGen(ctx, request.Prompt, s.config.Image.CodexModel, s.config.Image.CodexImageModel, encoded, defaultString(request.Size, "2048x2048"), defaultString(request.Quality, "auto"))
 		if err == nil {
+			data, err = normalizeCodexImage(ctx, data, request.Size, callLog)
+		}
+		if err == nil {
 			callLog.Add("Codex 图片生成完成", map[string]any{"position": index})
 		}
 	} else {
@@ -443,6 +446,11 @@ func (s *AIService) validateImage(request ImageRequest, identity Identity) error
 	}
 	if _, err := ImageRoutes(request.Model, identity); err != nil {
 		return err
+	}
+	if request.Model == "codex-gpt-image-2" {
+		if _, _, err := codexSize(request.Size); err != nil {
+			return &ImageError{Err: err, Status: http.StatusBadRequest, Type: "invalid_request_error", Code: "unsupported_size"}
+		}
 	}
 	if request.Model == "gpt-image-2" || request.Model == "gpt-image-2.5" {
 		clean := strings.ReplaceAll(strings.ToLower(request.Size), " ", "")

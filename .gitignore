@@ -1,19 +1,8 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-web_dist
-# Virtual environments
-.venv
 .idea
 data
-config.json
-edit
-
-docker-compose-local.yml
+/data-go/
+config.yaml
+/chatgpt2api
 
 .claude/settings.local.json
 
@@ -33,3 +22,9 @@ git_cache/
 loginwithpassword_*/
 logwithemailverifycode_*/
 test_batch_output/
+har
+
+debug
+.claude
+artifacts
+.DS_Store

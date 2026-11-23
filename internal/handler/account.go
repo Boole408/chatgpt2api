@@ -53,7 +53,7 @@ func RegisterAccountImageProbe(router *gin.RouterGroup, ai *service.AIService) {
 
 func (h *AccountHandler) list(c *gin.Context) {
 	page, pageSize := intQuery(c.Query("page"), 1), intQuery(c.Query("page_size"), 10)
-	items, total, types, err := h.service.List(c.Request.Context(), page, pageSize, c.Query("query"), c.Query("type"), c.Query("status"))
+	items, total, types, err := h.service.List(c.Request.Context(), page, pageSize, c.Query("query"), c.Query("type"), c.Query("status"), c.Query("sort"), c.Query("direction"))
 	if err != nil {
 		writeError(c, http.StatusInternalServerError, err)
 		return
@@ -126,7 +126,7 @@ func (h *AccountHandler) update(c *gin.Context) {
 		writeResult(c, nil, err)
 		return
 	}
-	items, _, _, err := h.service.List(c.Request.Context(), 1, 1000000, "", "", "")
+	items, _, _, err := h.service.List(c.Request.Context(), 1, 1000000, "", "", "", "", "")
 	responses := make([]AccountResponse, 0, len(items))
 	for _, account := range items {
 		responses = append(responses, toAccountResponse(account))

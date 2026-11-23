@@ -1022,6 +1022,7 @@ const accountOf = (raw) => raw.access_token || raw.accessToken ? { ...raw, acces
 
 Alpine.data("accounts", () => {
   const timers = {};
+  let accountLoad = 0;
 
   return {
     tab: "accounts",
@@ -1037,7 +1038,7 @@ Alpine.data("accounts", () => {
     query: "",
     type: "",
     status: "",
-    sortBy: "",
+    sortBy: "remaining",
     sortDir: "desc",
     loading: true,
     selected: [],
@@ -1067,15 +1068,18 @@ Alpine.data("accounts", () => {
     },
 
     destroy() {
+      accountLoad++;
       Object.values(timers).forEach(clearTimeout);
     },
 
     /* ---------- 账号 ---------- */
     async loadAccounts() {
+      const load = ++accountLoad;
       this.loading = true;
-      const params = new URLSearchParams({ page: this.page, page_size: this.size, query: this.query, type: this.type, status: this.status });
+      const params = new URLSearchParams({ page: this.page, page_size: this.size, query: this.query, type: this.type, status: this.status, sort: this.sortBy, direction: this.sortDir });
       try {
         const [summary, data] = await Promise.all([api("/api/accounts/summary"), api(`/api/accounts?${params}`)]);
+        if (load !== accountLoad) return;
         Object.assign(this, { summary, items: data.items, types: data.types, total: data.total, selected: [] });
         Alpine.store("app").poolSummary = summary;
         if (this.detail) {
@@ -1083,9 +1087,9 @@ Alpine.data("accounts", () => {
           if (updated) this.detail = updated;
         }
       } catch (error) {
-        toast(error.message);
+        if (load === accountLoad) toast(error.message);
       } finally {
-        this.loading = false;
+        if (load === accountLoad) this.loading = false;
       }
     },
 
@@ -1103,33 +1107,14 @@ Alpine.data("accounts", () => {
     },
 
     toggleSort(field) {
-      if (this.sortBy === field) {
-        if (this.sortDir === "desc") {
-          this.sortDir = "asc";
-        } else {
-          this.sortBy = "";
-          this.sortDir = "desc";
-        }
-        return;
-      }
+      this.sortDir = this.sortBy === field && this.sortDir === "desc" ? "asc" : "desc";
       this.sortBy = field;
-      this.sortDir = "desc";
+      this.reload();
     },
 
     sortIndicator(field) {
       if (this.sortBy !== field) return "";
       return this.sortDir === "desc" ? "↓" : "↑";
-    },
-
-    get sortedItems() {
-      if (!this.sortBy) return this.items;
-      const dir = this.sortDir === "desc" ? -1 : 1;
-      return [...this.items].sort((a, b) => {
-        if (this.sortBy === "remaining") return (Math.max(0, a.remaining || 0) - Math.max(0, b.remaining || 0)) * dir;
-        if (this.sortBy === "success") return (this.successRatePercent(a) - this.successRatePercent(b)) * dir || ((a.success || 0) - (b.success || 0)) * dir;
-        if (this.sortBy === "created_at") return (dayjs(a.created_at).valueOf() - dayjs(b.created_at).valueOf()) * dir;
-        return 0;
-      });
     },
 
     openDetail(item) {
@@ -1681,7 +1666,7 @@ Alpine.data("gallery", () => ({
   items: [],
   storage: null,
   loading: true,
-  busy: "",
+  busy: false,
   range: [],
   view: "card",
   page: 1,
@@ -1731,13 +1716,14 @@ Alpine.data("gallery", () => ({
   },
 
   async run(name, task) {
+    if (this.busy) return;
     this.busy = name;
     try {
       await task();
     } catch (error) {
       toast(error.message);
     } finally {
-      this.busy = "";
+      this.busy = false;
     }
   },
 

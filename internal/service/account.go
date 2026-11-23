@@ -30,8 +30,8 @@ func NewAccountService(repo *repository.Repository, proxy *ProxyService) *Accoun
 	return &AccountService{repo: repo, proxy: proxy}
 }
 
-func (s *AccountService) List(ctx context.Context, page int, pageSize int, query string, accountType string, status string) ([]repository.Account, int64, []string, error) {
-	return s.repo.AccountPage(ctx, page, pageSize, query, accountType, status)
+func (s *AccountService) List(ctx context.Context, page int, pageSize int, query, accountType, status, sortBy, sortDir string) ([]repository.Account, int64, []string, error) {
+	return s.repo.AccountPage(ctx, page, pageSize, query, accountType, status, sortBy, sortDir)
 }
 
 func (s *AccountService) Add(ctx context.Context, items []repository.Account) (int, int, int, []map[string]string, error) {
@@ -94,7 +94,7 @@ func (s *AccountService) Account(ctx context.Context, token string) (repository.
 }
 
 func (s *AccountService) MarkTextUsed(ctx context.Context, token string) error {
-	err := s.repo.TouchAccount(ctx, tokenEmail(token), time.Now().UTC().Format(time.RFC3339))
+	err := s.repo.TouchAccount(ctx, tokenEmail(token))
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil
 	}
@@ -170,13 +170,13 @@ func (s *AccountService) ImageToken(ctx context.Context, routes []string, plans 
 		if err == nil && account.Status == "正常" && account.Quota > 0 && (account.IsCodex || slices.Contains(routes, "web")) && (len(plans) == 0 || slices.Contains(plans, account.Type)) {
 			return account.AccessToken, nil
 		}
-		s.repo.ReleaseImageAccountByID(ctx, selected.ID)
+		s.repo.ReleaseImageAccountByID(context.WithoutCancel(ctx), selected.ID)
 	}
 	return "", fmt.Errorf("当前没有可用图片额度（已尝试 %d 个账号）", len(attempted))
 }
 
 func (s *AccountService) ReleaseImageToken(ctx context.Context, token string, success bool) {
-	s.repo.ReleaseImageAccount(ctx, tokenEmail(token), success, time.Now().UTC().Format(time.RFC3339))
+	s.repo.ReleaseImageAccount(ctx, tokenEmail(token), success)
 }
 
 func (s *AccountService) Refresh(ctx context.Context, tokens []string) (int, []map[string]string) {

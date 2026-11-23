@@ -683,7 +683,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <template x-for="item in sortedItems" :key="item.access_token">
+                    <template x-for="item in items" :key="item.access_token">
                       <tr class="row-clickable" @click="openDetail(item)">
                         <td class="col-check" @click.stop><input type="checkbox" class="checkbox checkbox-sm" aria-label="选择" :value="item.access_token" x-model="selected"></td>
                         <td>

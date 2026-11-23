@@ -35,7 +35,7 @@ type Account struct {
 
 func (Account) TableName() string { return "accounts" }
 
-func (r *Repository) AccountPage(ctx context.Context, page int, pageSize int, query string, accountType string, status string) ([]Account, int64, []string, error) {
+func (r *Repository) AccountPage(ctx context.Context, page int, pageSize int, query, accountType, status, sortBy, sortDir string) ([]Account, int64, []string, error) {
 	db := r.db.WithContext(ctx).Model(&Account{})
 	if query != "" {
 		operator := "LIKE"
@@ -55,7 +55,7 @@ func (r *Repository) AccountPage(ctx context.Context, page int, pageSize int, qu
 		return nil, 0, nil, err
 	}
 	var items []Account
-	if err := db.Order("id").Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
+	if err := db.Order(accountPageOrder(sortBy, sortDir)).Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
 		return nil, 0, nil, err
 	}
 	var types []string
@@ -63,6 +63,21 @@ func (r *Repository) AccountPage(ctx context.Context, page int, pageSize int, qu
 		return nil, 0, nil, err
 	}
 	return items, total, types, nil
+}
+
+func accountPageOrder(sortBy, sortDir string) string {
+	direction := " DESC"
+	if sortDir == "asc" {
+		direction = " ASC"
+	}
+	switch sortBy {
+	case "created_at":
+		return "created_at" + direction + ", id ASC"
+	case "success":
+		return "COALESCE(ROUND(100.0 * success / NULLIF(success + fail, 0)), 100)" + direction + ", success" + direction + ", id ASC"
+	default:
+		return "CASE WHEN remaining > 0 THEN remaining ELSE 0 END" + direction + ", id ASC"
+	}
 }
 
 func (r *Repository) Accounts(ctx context.Context) ([]Account, error) {
@@ -196,8 +211,13 @@ func (r *Repository) ReplaceAccountToken(ctx context.Context, email string, item
 	return r.AccountByEmail(ctx, email)
 }
 
-func (r *Repository) TouchAccount(ctx context.Context, email string, now string) error {
-	result := r.db.WithContext(ctx).Model(&Account{}).Where("email = ?", email).Update("last_used_at", now)
+func accountUseTime() string {
+	// Fixed-width UTC timestamps preserve chronological order in SQL.
+	return time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")
+}
+
+func (r *Repository) TouchAccount(ctx context.Context, email string) error {
+	result := r.db.WithContext(ctx).Model(&Account{}).Where("email = ?", email).Update("last_used_at", accountUseTime())
 	if result.Error != nil {
 		return result.Error
 	}
@@ -208,34 +228,28 @@ func (r *Repository) TouchAccount(ctx context.Context, email string, now string)
 }
 
 func (r *Repository) AcquireImageAccount(ctx context.Context, routes []string, plans []string, concurrency int, attempted map[string]bool) (Account, bool, error) {
-	var candidates []Account
-	db := r.db.WithContext(ctx).Where("status = ? AND quota > 0", "正常")
-	webRoute := slices.Contains(routes, "web")
-	if !webRoute {
-		db = db.Where("is_codex = ?", true)
-	}
-	if len(plans) > 0 {
-		db = db.Where("type IN ?", plans)
-	}
-	if err := db.Select("id", "email").Order("last_used_at ASC, id ASC").Limit(100).Find(&candidates).Error; err != nil {
-		return Account{}, false, err
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	for _, candidate := range candidates {
-		if attempted[*candidate.Email] {
-			continue
+	// If another worker took the slot, re-rank using the updated load.
+	for range 5 {
+		var candidate Account
+		err := r.imageAccounts(ctx, routes, plans, attempted).
+			Where("image_inflight < ? AND image_inflight < quota", concurrency).
+			Select("id", "image_inflight", "last_used_at").
+			Order("image_inflight ASC, COALESCE(last_used_at, '') ASC, id ASC").
+			First(&candidate).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return Account{}, false, nil
 		}
-		claim := r.db.WithContext(ctx).Model(&Account{}).Where(
-			"id = ? AND status = ? AND quota > 0 AND image_inflight < ?",
-			candidate.ID, "正常", concurrency,
-		)
-		if !webRoute {
-			claim = claim.Where("is_codex = ?", true)
+		if err != nil {
+			return Account{}, false, err
 		}
-		if len(plans) > 0 {
-			claim = claim.Where("type IN ?", plans)
+		claim := r.imageAccounts(ctx, routes, plans, nil).
+			Where("id = ? AND image_inflight = ? AND image_inflight < ? AND image_inflight < quota", candidate.ID, candidate.ImageInflight, concurrency)
+		if candidate.LastUsedAt == nil {
+			claim = claim.Where("last_used_at IS NULL")
+		} else {
+			claim = claim.Where("last_used_at = ?", *candidate.LastUsedAt)
 		}
-		result := claim.Updates(map[string]any{"image_inflight": gorm.Expr("image_inflight + ?", 1), "last_used_at": now})
+		result := claim.Updates(map[string]any{"image_inflight": gorm.Expr("image_inflight + 1"), "last_used_at": accountUseTime()})
 		if result.Error != nil {
 			return Account{}, false, result.Error
 		}
@@ -244,6 +258,7 @@ func (r *Repository) AcquireImageAccount(ctx context.Context, routes []string, p
 		}
 		item, err := r.AccountByID(ctx, candidate.ID)
 		if err != nil {
+			_ = r.ReleaseImageAccountByID(context.WithoutCancel(ctx), candidate.ID)
 			return Account{}, false, err
 		}
 		return item, true, nil
@@ -255,7 +270,14 @@ func (r *Repository) AcquireImageAccount(ctx context.Context, routes []string, p
 // 被并发占满但仍能轮到的账号算可用（调用方应继续等待）；已尝试过的账号不算，
 // 避免账号都试过一遍后还在空转。
 func (r *Repository) ImageAccountAvailable(ctx context.Context, routes []string, plans []string, attempted map[string]bool) (bool, error) {
-	db := r.db.WithContext(ctx).Model(&Account{}).Where("status = ? AND quota > 0", "正常")
+	var count int64
+	err := r.imageAccounts(ctx, routes, plans, attempted).Count(&count).Error
+	return count > 0, err
+}
+
+func (r *Repository) imageAccounts(ctx context.Context, routes, plans []string, attempted map[string]bool) *gorm.DB {
+	db := r.db.WithContext(ctx).Model(&Account{}).
+		Where("status = ? AND quota > 0 AND email IS NOT NULL AND email <> '' AND access_token <> ''", "正常")
 	if !slices.Contains(routes, "web") {
 		db = db.Where("is_codex = ?", true)
 	}
@@ -269,17 +291,13 @@ func (r *Repository) ImageAccountAvailable(ctx context.Context, routes []string,
 		}
 		db = db.Where("email NOT IN ?", emails)
 	}
-	var count int64
-	if err := db.Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count > 0, nil
+	return db
 }
 
-func (r *Repository) ReleaseImageAccount(ctx context.Context, email string, success bool, now string) (Account, error) {
+func (r *Repository) ReleaseImageAccount(ctx context.Context, email string, success bool) (Account, error) {
 	values := map[string]any{
 		"image_inflight": gorm.Expr("CASE WHEN image_inflight > 0 THEN image_inflight - 1 ELSE 0 END"),
-		"last_used_at":   now,
+		"last_used_at":   accountUseTime(),
 	}
 	if success {
 		values["success"] = gorm.Expr("success + 1")

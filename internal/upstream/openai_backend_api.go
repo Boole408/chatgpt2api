@@ -91,19 +91,6 @@ func (u *OpenAIBackendAPI) ListModels(ctx context.Context) ([]map[string]any, er
 	return payload.Models, nil
 }
 
-func (u *OpenAIBackendAPI) Me(ctx context.Context) (string, error) {
-	response, err := u.request(ctx, http.MethodGet, "/backend-api/me", nil, nil)
-	if err != nil {
-		return "", err
-	}
-	defer response.Body.Close()
-	var result struct {
-		Email string `json:"email"`
-	}
-	err = json.NewDecoder(response.Body).Decode(&result)
-	return result.Email, err
-}
-
 func (u *OpenAIBackendAPI) QuotaInfo(ctx context.Context) (int, string, error) {
 	payload := map[string]any{"gizmo_id": nil, "requested_default_model": nil, "conversation_id": nil, "conversation_origin": nil, "system_hints": nil, "timezone": "Asia/Shanghai", "timezone_offset_min": -480}
 	response, err := u.request(ctx, http.MethodPost, "/backend-api/conversation/init", payload, nil)
@@ -188,7 +175,7 @@ func (u *OpenAIBackendAPI) startConversationWithMessage(ctx context.Context, mes
 		return "", "", err
 	}
 	defer response.Body.Close()
-	return readConversationSSEWithMessage(response.Body, delta, requireText, created)
+	return readConversationSSE(response.Body, delta, requireText, created)
 }
 
 // prepareConversation 在发起对话前换取 conduit token。
@@ -413,23 +400,6 @@ func (u *OpenAIBackendAPI) Download(ctx context.Context, conversationID string, 
 		return nil, responseError("image download", response)
 	}
 	return io.ReadAll(response.Body)
-}
-
-func (u *OpenAIBackendAPI) GenerateImage(ctx context.Context, prompt string, model string, images [][]byte) ([]byte, string, error) {
-	content := []any{map[string]any{"type": "text", "text": prompt}}
-	for _, data := range images {
-		content = append(content, map[string]any{"type": "image", "data": data, "mime": "image/png"})
-	}
-	conversationID, err := u.StartConversation(ctx, []map[string]any{{"role": "user", "content": content}}, model, "", []string{"picture_v2"}, false, func(string) error { return nil })
-	if err != nil {
-		return nil, "", err
-	}
-	ids, err := u.PollImages(ctx, conversationID)
-	if err != nil {
-		return nil, conversationID, err
-	}
-	data, err := u.Download(ctx, conversationID, ids[0])
-	return data, conversationID, err
 }
 
 func (u *OpenAIBackendAPI) chatRequirements(ctx context.Context) error {

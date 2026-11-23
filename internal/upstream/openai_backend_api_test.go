@@ -14,13 +14,6 @@ import (
 
 func TestOpenAIBackendAccountIntegration(t *testing.T) {
 	client := openAIBackendClient(t)
-	email, err := client.Me(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if email == "" {
-		t.Fatal("missing email")
-	}
 	remaining, resetAfter, err := client.QuotaInfo(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +82,20 @@ func TestOpenAIBackendSearchIntegration(t *testing.T) {
 
 func TestOpenAIBackendImageIntegration(t *testing.T) {
 	client := openAIBackendClient(t)
-	image, _, err := client.GenerateImage(context.Background(), "生成一只鸡", "gpt-image-2.6", nil)
+	ctx := context.Background()
+	content := []any{map[string]any{"type": "text", "text": "生成一只鸡"}}
+	conversationID, err := client.StartConversation(ctx, []map[string]any{{"role": "user", "content": content}}, "gpt-image-2.6", "", []string{"picture_v2"}, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := client.PollImages(ctx, conversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) == 0 {
+		t.Fatal("missing image id")
+	}
+	image, err := client.Download(ctx, conversationID, ids[0])
 	if err != nil {
 		t.Fatal(err)
 	}

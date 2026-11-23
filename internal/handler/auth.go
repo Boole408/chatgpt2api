@@ -60,6 +60,15 @@ func (h *AuthHandler) reveal(c *gin.Context) {
 	}
 }
 
+func writeKeySaveError(c *gin.Context, err error) {
+	var fieldError *service.KeyFieldError
+	if errors.As(err, &fieldError) {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": gin.H{"error": err.Error(), "field": fieldError.Field}})
+		return
+	}
+	writeError(c, http.StatusBadRequest, err)
+}
+
 func (h *AuthHandler) create(c *gin.Context) {
 	var body CreateAPIKeyRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -75,7 +84,7 @@ func (h *AuthHandler) create(c *gin.Context) {
 	}
 	item, generated, err := h.service.Create(c.Request.Context(), body.Name, body.Key, body.Plan, body.Route, body.Policy)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, err)
+		writeKeySaveError(c, err)
 		return
 	}
 	result := gin.H{"item": toAPIKeyResponse(item), "items": toAPIKeyResponses(append(items, item))}
@@ -97,7 +106,7 @@ func (h *AuthHandler) update(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		writeError(c, http.StatusBadRequest, err)
+		writeKeySaveError(c, err)
 		return
 	}
 	items, err := h.service.List(c.Request.Context())

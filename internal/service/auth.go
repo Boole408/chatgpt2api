@@ -21,6 +21,13 @@ import (
 var ErrUnauthorized = errors.New("密钥无效或已失效，请重新登录")
 var ErrKeyNotRecoverable = errors.New("此密钥只保存了哈希，请编辑并填入原密钥或新的密钥")
 
+type KeyFieldError struct {
+	Field   string
+	message string
+}
+
+func (e *KeyFieldError) Error() string { return e.message }
+
 type Identity struct {
 	ID            string
 	Name          string
@@ -222,23 +229,10 @@ func (s *AuthService) Create(ctx context.Context, name string, key string, plan 
 		key = "sk-" + base64.RawURLEncoding.EncodeToString(secret[:])
 		generated = key
 	}
-	if repository.IsHashedAPIKey(key) {
-		return repository.APIKey{}, "", errors.New("请输入新的专用密钥")
-	}
-	if len(key) > 255 {
-		return repository.APIKey{}, "", errors.New("密钥长度不能超过 255 字节")
-	}
-	if key == s.adminKey {
-		return repository.APIKey{}, "", errors.New("这个密钥和管理员密钥冲突了，请换一个新的密钥")
-	}
-	exists, err := s.repo.APIKeyExists(ctx, key, "")
-	if err != nil {
+	if err := s.validateUserKey(ctx, key, ""); err != nil {
 		return repository.APIKey{}, "", err
 	}
-	if exists {
-		return repository.APIKey{}, "", errors.New("这个专用密钥已经存在，请换一个新的密钥")
-	}
-	name, err = s.availableName(ctx, name, "")
+	name, err := s.availableName(ctx, name, "")
 	if err != nil {
 		return repository.APIKey{}, "", err
 	}
@@ -268,18 +262,8 @@ func (s *AuthService) Update(ctx context.Context, id string, name *string, enabl
 		}
 	}
 	if key != nil && strings.TrimSpace(*key) != "" {
-		if *key == s.adminKey || repository.IsHashedAPIKey(*key) {
-			return repository.APIKey{}, errors.New("请输入与管理员密钥不同的新密钥")
-		}
-		if len(*key) > 255 {
-			return repository.APIKey{}, errors.New("密钥长度不能超过 255 字节")
-		}
-		exists, err := s.repo.APIKeyExists(ctx, *key, id)
-		if err != nil {
+		if err := s.validateUserKey(ctx, *key, id); err != nil {
 			return repository.APIKey{}, err
-		}
-		if exists {
-			return repository.APIKey{}, errors.New("这个专用密钥已经存在，请换一个新的密钥")
 		}
 		s.protectKey(&item, *key)
 	}
@@ -313,6 +297,25 @@ func (s *AuthService) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+func (s *AuthService) validateUserKey(ctx context.Context, key, excludeID string) error {
+	switch {
+	case repository.IsHashedAPIKey(key):
+		return &KeyFieldError{Field: "key", message: "请输入密钥原文"}
+	case len(key) > 255:
+		return &KeyFieldError{Field: "key", message: "密钥长度不能超过 255 字节"}
+	case key == s.adminKey:
+		return &KeyFieldError{Field: "key", message: "不能使用管理员密钥，请换一个密钥"}
+	}
+	exists, err := s.repo.APIKeyExists(ctx, key, excludeID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return &KeyFieldError{Field: "key", message: "此密钥已存在，请换一个密钥"}
+	}
+	return nil
+}
+
 func (s *AuthService) availableName(ctx context.Context, name string, excludeID string) (string, error) {
 	if name != "" {
 		exists, err := s.repo.APIKeyNameExists(ctx, name, "user", excludeID)
@@ -320,7 +323,7 @@ func (s *AuthService) availableName(ctx context.Context, name string, excludeID 
 			return "", err
 		}
 		if exists {
-			return "", errors.New("这个名称已经在使用中了，换一个更容易区分的名称吧")
+			return "", &KeyFieldError{Field: "name", message: "名称已存在。请换一个名称，或在列表中编辑已有密钥。"}
 		}
 		return name, nil
 	}

@@ -103,23 +103,10 @@ func (u *OpenAIBackendAPI) convertMessage(ctx context.Context, message map[strin
 	return map[string]any{"id": messageID, "author": map[string]any{"role": role, "name": nil, "metadata": map[string]any{}}, "create_time": float64(time.Now().UnixNano()) / 1e9, "update_time": nil, "content": map[string]any{"content_type": contentType, "parts": parts}, "metadata": metadata, "channel": nil, "recipient": "all", "status": "finished_successfully", "end_turn": nil, "weight": 1}, nil
 }
 
-func readConversationSSE(reader io.Reader, delta func(string) error) (string, error) {
-	return readConversationSSEWithTextRequirement(reader, delta, true)
-}
-
-func readConversationSSEWithTextRequirement(reader io.Reader, delta func(string) error, requireText bool, createdCallbacks ...func(string) error) (string, error) {
-	conversationID, _, err := readConversationSSEWithMessage(reader, delta, requireText, createdCallbacks...)
-	return conversationID, err
-}
-
-// readConversationSSEWithMessage also returns the assistant message id seen on
+// readConversationSSE also returns the assistant message id seen on
 // the stream, so callers that need to address that message afterwards (speech
 // synthesis) can skip a second round trip to fetch the conversation.
-func readConversationSSEWithMessage(reader io.Reader, delta func(string) error, requireText bool, createdCallbacks ...func(string) error) (string, string, error) {
-	var created func(string) error
-	if len(createdCallbacks) > 0 {
-		created = createdCallbacks[0]
-	}
+func readConversationSSE(reader io.Reader, delta func(string) error, requireText bool, created func(string) error) (string, string, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 32*1024*1024)
 	conversationID, current, messageID := "", "", ""

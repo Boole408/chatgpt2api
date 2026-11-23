@@ -31,8 +31,10 @@ async function send(path, { method = "GET", body, headers = {}, key = session.ge
     return new Promise(() => {});
   }
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(errorText(payload.detail) || errorText(payload.error) || payload.message || `请求失败（${response.status}）`);
+    const payload = await response.json().catch(() => null);
+    const error = new Error(errorText(payload?.detail) || errorText(payload?.error) || payload?.message || `请求失败（${response.status}）`);
+    error.field = payload?.detail?.field;
+    throw error;
   }
   return response;
 }
@@ -1570,7 +1572,7 @@ Alpine.data("keys", () => ({
   query: "",
   page: 1,
   size: 20,
-  form: { open: false, id: "", name: "", key: "", plan: ["free"], route: ["web"], error: "", saving: false },
+  form: { open: false, id: "", name: "", key: "", plan: ["free"], route: ["web"], error: null, saving: false },
   revealed: { id: "", key: "" },
   readingKey: false,
   keyReadVersion: 0,
@@ -1599,20 +1601,26 @@ Alpine.data("keys", () => ({
 
   openForm(item) {
     this.hideKey();
-    this.form = { open: true, id: item?.id ?? "", name: item?.name ?? "", key: "", canReveal: item?.can_reveal ?? true, plan: item?.plan ?? ["free"], route: item?.route ?? ["web"], error: "", saving: false };
+    this.form = { open: true, id: item?.id ?? "", name: item?.name ?? "", key: "", canReveal: item?.can_reveal ?? true, plan: item?.plan ?? ["free"], route: item?.route ?? ["web"], error: null, saving: false };
+  },
+
+  clearFieldError(field) {
+    if (this.form.error?.field === field) this.form.error = null;
   },
 
   async save() {
     if (this.form.saving) return;
     this.form.saving = true;
-    this.form.error = "";
+    this.form.error = null;
     try {
       const body = { name: this.form.name, plan: this.form.plan, route: this.form.route };
       if (this.form.key.trim()) body.key = this.form.key;
       this.items = (await api(this.form.id ? `/api/auth/users/${this.form.id}` : "/api/auth/users", { method: "POST", body })).items;
       this.form.open = false;
     } catch (error) {
-      this.form.error = error.message;
+      const field = ["name", "key"].includes(error.field) ? error.field : "";
+      this.form.error = { field, message: error.message };
+      if (field) this.$nextTick(() => this.$refs[field]?.focus());
     } finally {
       this.form.saving = false;
     }
@@ -1793,6 +1801,7 @@ const LOG_STATUS = {
 const LOG_FIELDS = {
   duration_ms: "耗时（毫秒）",
   endpoint: "调用地址",
+  error: "失败原因",
   key_id: "令牌 ID",
   key_name: "令牌名称",
   model: "模型",
@@ -1823,6 +1832,7 @@ Alpine.data("logs", () => {
     refreshedAt: "",
     label: (key) => LOG_FIELDS[key] ?? key,
     status: (log) => LOG_STATUS[log.detail.status],
+    failureReason: (log) => errorText(log.detail.error).trim() || "未记录具体原因",
     urls: (log) => log.detail.urls ?? [],
     thumb: (url) => url.replace("/images/", "/image-thumbnails/"),
     duration: (log) => log.detail.status === "running" ? Date.now() - dayjs(log.detail.started_at).valueOf() : log.detail.duration_ms,
@@ -1885,7 +1895,8 @@ Alpine.data("logs", () => {
     },
 
     get scalars() {
-      return Object.entries(this.detail.detail).filter(([key, value]) => !["urls", "events"].includes(key) && typeof value !== "object");
+      const { status } = this.detail.detail;
+      return Object.entries(this.detail.detail).filter(([key, value]) => !["urls", "events"].includes(key) && !(key === "error" && status === "failed") && typeof value !== "object");
     },
 
     get json() {

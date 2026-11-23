@@ -13,7 +13,7 @@ func TestReadConversationSSEIgnoresCompletedAssistantHistory(t *testing.T) {
 		"data: [DONE]\n\n",
 	}, "")
 	var output strings.Builder
-	if _, err := readConversationSSE(strings.NewReader(stream), func(value string) error { output.WriteString(value); return nil }); err != nil {
+	if _, _, err := readConversationSSE(strings.NewReader(stream), func(value string) error { output.WriteString(value); return nil }, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	if output.String() != "new answer" {
